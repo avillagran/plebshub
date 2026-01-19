@@ -1,0 +1,78 @@
+name: plebshub
+description: PlebsHub - Decentralized super-app built on Nostr
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Local packages
+  plebshub_ui:
+    path: packages/plebshub_ui
+  zap_widgets:
+    path: packages/zap_widgets
+
+  # State Management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Routing
+  go_router: ^14.2.0
+
+  # Database
+  isar: ^3.1.0+1
+  isar_flutter_libs: ^3.1.0+1
+
+  # Nostr (NDK)
+  # ndk: ^0.6.0
+  # ndk_rust_verifier: ^0.6.0  # Native platforms only
+
+  # UI utilities
+  flutter_svg: ^2.0.10+1
+  cached_network_image: ^3.3.1
+
+  # Utils
+  freezed_annotation: ^2.4.1
+  json_annotation: ^4.9.0
+  equatable: ^2.0.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter
+
+  # Code generation
+  build_runner: ^2.4.9
+  freezed: ^2.5.2
+  json_serializable: ^6.8.0
+  riverpod_generator: ^2.4.0
+  isar_generator: ^3.1.0+1
+
+  # Linting
+  flutter_lints: ^5.0.0
+
+  # Testing
+  mocktail: ^1.0.3
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/icons/
+    - assets/images/
+
+  # fonts:
+  #   - family: Inter
+  #     fonts:
+  #       - asset: assets/fonts/Inter-Regular.ttf
+  #       - asset: assets/fonts/Inter-Medium.ttf
+  #         weight: 500
+  #       - asset: assets/fonts/Inter-SemiBold.ttf
+  #         weight: 600
+  #       - asset: assets/fonts/Inter-Bold.ttf
+  #         weight: 700

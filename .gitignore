@@ -1,0 +1,155 @@
+# ==================================
+# Flutter / Dart
+# ==================================
+
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code
+.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+/build/
+pubspec.lock
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Platform specific
+/android/.gradle/
+/android/captures/
+/android/gradlew
+/android/gradlew.bat
+/android/local.properties
+/android/**/GeneratedPluginRegistrant.*
+/android/key.properties
+*.jks
+*.keystore
+
+/ios/.symlinks/
+/ios/Pods/
+/ios/Flutter/Flutter.framework
+/ios/Flutter/Flutter.podspec
+/ios/**/Pods/
+/ios/**/.symlinks/
+/ios/**/DerivedData/
+/ios/**/Flutter/ephemeral/
+/ios/**/xcuserdata/
+
+/macos/Flutter/ephemeral/
+/macos/Pods/
+/macos/**/.symlinks/
+
+/linux/flutter/ephemeral/
+
+/windows/flutter/ephemeral/
+
+# Web
+/web/favicon.png
+
+# Coverage
+coverage/
+*.lcov
+
+# Test
+.test_coverage.dart
+.test_runner.dart
+
+# ==================================
+# Build artifacts
+# ==================================
+*.apk
+*.aab
+*.ipa
+*.app
+*.exe
+*.dmg
+*.deb
+*.rpm
+*.snap
+*.msix
+*.appx
+
+# ==================================
+# Project Planning (private)
+# ==================================
+plan.md
+plan/
+
+# ==================================
+# Claude Code / OpenCode / AI Tools
+# ==================================
+.claude/
+.opencode/
+.cursor/
+.aider/
+.continue/
+.codeium/
+.tabnine/
+.copilot/
+
+# Claude cache and artifacts
+**/.claude/cache/
+**/thoughts/
+**/.claude/cache/agents/
+
+# ==================================
+# Environment & Secrets
+# ==================================
+.env
+.env.*
+*.env
+secrets/
+*.pem
+*.p12
+*.key
+
+# ==================================
+# Isar Database
+# ==================================
+*.isar
+*.isar.lock
+default.isar
+default.isar.lock
+
+# ==================================
+# Misc
+# ==================================
+*.bak
+*.tmp
+*.temp
+*~
+.fvm/
