@@ -28,8 +28,8 @@ dependencies:
   isar_flutter_libs: ^3.1.0+1
 
   # Nostr (NDK)
-  ndk: ^0.3.2
-  ndk_rust_verifier: ^0.3.1  # Native platforms only
+  ndk: ^0.6.0
+  # ndk_rust_verifier: ^0.4.0  # Requires Flutter 3.32+ - using pure Dart verifier for now
 
   # UI utilities
   flutter_svg: ^2.0.10+1

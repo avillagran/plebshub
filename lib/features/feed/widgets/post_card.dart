@@ -2,32 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:plebshub_ui/plebshub_ui.dart';
 import 'package:zap_widgets/zap_widgets.dart';
 
+import '../models/post.dart';
+
 /// A card displaying a single post/note.
 class PostCard extends StatelessWidget {
   const PostCard({
     super.key,
-    required this.authorName,
-    required this.authorPubkey,
-    required this.content,
-    required this.createdAt,
-    this.eventId,
+    required this.post,
     this.onTap,
   });
 
-  /// The author's display name.
-  final String authorName;
-
-  /// The author's Nostr public key.
-  final String authorPubkey;
-
-  /// The post content.
-  final String content;
-
-  /// When the post was created.
-  final DateTime createdAt;
-
-  /// The event ID (for replies, zaps, etc.).
-  final String? eventId;
+  /// The post to display.
+  final Post post;
 
   /// Callback when the card is tapped.
   final VoidCallback? onTap;
@@ -52,7 +38,9 @@ class PostCard extends StatelessWidget {
                 ),
                 child: Center(
                   child: Text(
-                    authorName.isNotEmpty ? authorName[0].toUpperCase() : '?',
+                    post.author.displayName.isNotEmpty
+                        ? post.author.displayName[0].toUpperCase()
+                        : '?',
                     style: AppTypography.titleLarge,
                   ),
                 ),
@@ -64,12 +52,12 @@ class PostCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      authorName,
+                      post.author.displayName,
                       style: AppTypography.titleMedium,
                       overflow: TextOverflow.ellipsis,
                     ),
                     Text(
-                      _formatPubkey(authorPubkey),
+                      _formatPubkey(post.author.pubkey),
                       style: AppTypography.labelSmall,
                     ),
                   ],
@@ -77,7 +65,7 @@ class PostCard extends StatelessWidget {
               ),
               // Time
               Text(
-                _formatTime(createdAt),
+                _formatTime(post.createdAt),
                 style: AppTypography.labelSmall,
               ),
             ],
@@ -85,7 +73,7 @@ class PostCard extends StatelessWidget {
           const SizedBox(height: 12),
           // Content
           Text(
-            content,
+            post.content,
             style: AppTypography.bodyMedium,
           ),
           const SizedBox(height: 12),
@@ -95,28 +83,28 @@ class PostCard extends StatelessWidget {
             children: [
               _ActionButton(
                 icon: Icons.chat_bubble_outline,
-                label: '0',
+                label: '${post.reactionsCount}',
                 onTap: () {
                   // TODO: Open reply
                 },
               ),
               _ActionButton(
                 icon: Icons.repeat,
-                label: '0',
+                label: '${post.repostsCount}',
                 onTap: () {
                   // TODO: Repost
                 },
               ),
               _ActionButton(
                 icon: Icons.favorite_border,
-                label: '0',
+                label: '${post.reactionsCount}',
                 onTap: () {
                   // TODO: Like
                 },
               ),
               ZapButton(
-                recipientPubkey: authorPubkey,
-                eventId: eventId,
+                recipientPubkey: post.author.pubkey,
+                eventId: post.id,
               ),
             ],
           ),

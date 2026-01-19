@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:ndk/domain_layer/entities/connection_source.dart';
 import 'package:ndk/ndk.dart';
-import 'package:ndk_rust_verifier/ndk_rust_verifier.dart';
+import 'package:ndk/shared/nips/nip01/bip340.dart';
 
 import '../core/constants/relay_constants.dart';
 
@@ -11,10 +14,27 @@ import '../core/constants/relay_constants.dart';
 /// - Native platforms (Android, iOS, macOS, Windows, Linux): RustEventVerifier
 /// - Web platform: Bip340EventVerifier (pure Dart)
 ///
+/// Features:
+/// - Automatic relay connection on initialization
+/// - Event fetching and streaming
+/// - Relay connection management
+///
 /// Example:
 /// ```dart
 /// final ndk = NdkService.instance.ndk;
 /// final relays = NdkService.instance.connectedRelays;
+///
+/// // Fetch events
+/// final events = await NdkService.instance.fetchEvents(
+///   filter: Filter(kinds: [1], limit: 50),
+/// );
+///
+/// // Stream events
+/// NdkService.instance.streamEvents(
+///   filter: Filter(kinds: [1]),
+/// ).listen((event) {
+///   print('New event: ${event.id}');
+/// });
 /// ```
 class NdkService {
   NdkService._();
@@ -25,6 +45,8 @@ class NdkService {
   static NdkService get instance => _instance;
 
   Ndk? _ndk;
+  bool _isConnecting = false;
+  bool _isConnected = false;
 
   /// Get the NDK instance, initializing it if necessary
   Ndk get ndk {
@@ -32,12 +54,17 @@ class NdkService {
     return _ndk!;
   }
 
+  /// Check if relays are connected
+  bool get isConnected => _isConnected;
+
+  /// Check if currently connecting to relays
+  bool get isConnecting => _isConnecting;
+
   /// Initialize NDK with platform-specific configuration
   Ndk _initializeNdk() {
     final config = NdkConfig(
-      // Use Dart verifier for web, Rust verifier for native platforms
-      eventVerifier:
-          kIsWeb ? Bip340EventVerifier() : RustEventVerifier(),
+      // Use pure Dart verifier for all platforms (Rust verifier requires Flutter 3.32+)
+      eventVerifier: Bip340EventVerifier(),
       // Cache manager for storing events
       cache: MemCacheManager(),
       // Bootstrap relays - these will be connected on start
@@ -49,13 +76,165 @@ class NdkService {
     return ndk;
   }
 
+  /// Connect to relays explicitly.
+  ///
+  /// This method ensures relays are connected. It's safe to call multiple times.
+  /// Returns true if connection was successful or already connected.
+  Future<bool> connectToRelays() async {
+    if (_isConnected) {
+      return true;
+    }
+
+    if (_isConnecting) {
+      // Wait for existing connection attempt
+      await Future.delayed(const Duration(milliseconds: 100));
+      return _isConnected;
+    }
+
+    _isConnecting = true;
+
+    try {
+      debugPrint('Connecting to ${kDefaultRelays.length} relays...');
+
+      // Connect to bootstrap relays
+      for (final relayUrl in kDefaultRelays) {
+        try {
+          await ndk.relays.connectRelay(
+            dirtyUrl: relayUrl,
+            connectionSource: ConnectionSource.explicit,
+          );
+          debugPrint('Connected to relay: $relayUrl');
+        } catch (e) {
+          debugPrint('Failed to connect to $relayUrl: $e');
+          // Continue with other relays
+        }
+      }
+
+      // Wait for connections to establish (WebSocket isOpen takes time to propagate)
+      final deadline = DateTime.now().add(const Duration(seconds: 3));
+      var connectedCount = 0;
+
+      while (DateTime.now().isBefore(deadline)) {
+        connectedCount = connectedRelayUrls.length;
+        if (connectedCount >= kMinimumRelayCount) {
+          break;
+        }
+        await Future.delayed(const Duration(milliseconds: 100));
+      }
+
+      debugPrint('Connected to $connectedCount relays');
+      _isConnected = connectedCount >= kMinimumRelayCount;
+
+      if (!_isConnected) {
+        debugPrint(
+          'Warning: Only $connectedCount relays connected (minimum: $kMinimumRelayCount)',
+        );
+      }
+
+      return _isConnected;
+    } catch (e) {
+      debugPrint('Error connecting to relays: $e');
+      return false;
+    } finally {
+      _isConnecting = false;
+    }
+  }
+
+  /// Fetch events from relays using a filter.
+  ///
+  /// Returns a list of [Nip01Event] objects matching the filter criteria.
+  ///
+  /// Example:
+  /// ```dart
+  /// final events = await NdkService.instance.fetchEvents(
+  ///   filter: Filter(kinds: [1], limit: 50),
+  ///   timeout: Duration(seconds: 5),
+  /// );
+  /// ```
+  Future<List<Nip01Event>> fetchEvents({
+    required Filter filter,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    // Ensure relays are connected
+    await connectToRelays();
+
+    try {
+      debugPrint('Querying with filter: kinds=${filter.kinds}, limit=${filter.limit}');
+      debugPrint('Connected relays for query: ${connectedRelayUrls.length}');
+      debugPrint('NDK connectedRelays count: ${ndk.relays.connectedRelays.length}');
+
+      // Debug: check what types of relays NDK sees
+      for (final relay in ndk.relays.connectedRelays) {
+        debugPrint('Relay: ${relay.url}, type: ${relay.runtimeType}');
+      }
+
+      final request = ndk.requests.query(
+        filters: [filter],
+        explicitRelays: kDefaultRelays,
+      );
+
+      final events = <Nip01Event>[];
+
+      await for (final event in request.stream) {
+        events.add(event);
+      }
+
+      debugPrint('Fetched ${events.length} events');
+      return events;
+    } catch (e) {
+      debugPrint('Error fetching events: $e');
+      return [];
+    }
+  }
+
+  /// Stream events from relays using a filter.
+  ///
+  /// Returns a stream of [Nip01Event] objects matching the filter criteria.
+  /// This is useful for real-time updates.
+  ///
+  /// Example:
+  /// ```dart
+  /// NdkService.instance.streamEvents(
+  ///   filter: Filter(kinds: [1]),
+  /// ).listen((event) {
+  ///   print('New event: ${event.id}');
+  /// });
+  /// ```
+  Stream<Nip01Event> streamEvents({
+    required Filter filter,
+  }) async* {
+    // Ensure relays are connected
+    await connectToRelays();
+
+    final request = ndk.requests.subscription(
+      filters: [filter],
+    );
+
+    await for (final event in request.stream) {
+      yield event;
+    }
+  }
+
   /// Get list of connected relay URLs
-  List<String> get connectedRelayUrls =>
-      ndk.relays.connectedRelays.map((r) => r.url).toList();
+  ///
+  /// Uses lastSuccessfulConnect timestamp instead of isOpen() which
+  /// doesn't reliably report connection state in NDK 0.3.x
+  List<String> get connectedRelayUrls {
+    return kDefaultRelays.where((url) {
+      final connectivity = ndk.relays.getRelayConnectivity(url);
+      return connectivity != null &&
+          connectivity.relay.lastSuccessfulConnect != null &&
+          connectivity.relayTransport != null;
+    }).toList();
+  }
 
   /// Check if a specific relay is connected
-  bool isRelayConnected(String relayUrl) =>
-      ndk.relays.isRelayConnected(relayUrl);
+  bool isRelayConnected(String relayUrl) {
+    final connectivity = ndk.relays.getRelayConnectivity(relayUrl);
+    return connectivity != null &&
+        connectivity.relay.lastSuccessfulConnect != null &&
+        connectivity.relayTransport != null;
+  }
 
   /// Disconnect from a specific relay
   Future<void> disconnectRelay(String relayUrl) async {
@@ -78,5 +257,61 @@ class NdkService {
   /// Reset NDK instance (useful for testing or switching accounts)
   void reset() {
     _ndk = null;
+  }
+
+  /// Publish a kind:1 text note event to relays.
+  ///
+  /// Creates a new event with the given content, signs it with the provided
+  /// private key, and broadcasts it to all connected relays.
+  ///
+  /// Returns the published event on success, null on failure.
+  ///
+  /// Example:
+  /// ```dart
+  /// final event = await NdkService.instance.publishTextNote(
+  ///   content: 'Hello Nostr!',
+  ///   privateKey: userPrivateKey,
+  /// );
+  /// ```
+  Future<Nip01Event?> publishTextNote({
+    required String content,
+    required String privateKey,
+    List<List<String>> tags = const [],
+  }) async {
+    try {
+      // Ensure relays are connected
+      await connectToRelays();
+
+      debugPrint('Publishing text note...');
+
+      // Get public key from private key
+      final publicKey = Bip340.getPublicKey(privateKey);
+
+      // Create event
+      final event = Nip01Event(
+        pubKey: publicKey,
+        kind: 1,
+        content: content,
+        tags: tags,
+        createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      );
+
+      // Sign the event
+      event.sign(privateKey);
+
+      // Broadcast to all connected relays using the NDK broadcast API
+      final broadcastResponse = ndk.broadcast.broadcast(
+        nostrEvent: event,
+      );
+
+      // Wait for broadcast to complete
+      await broadcastResponse.broadcastDoneFuture;
+
+      debugPrint('Event published successfully: ${event.id}');
+      return event;
+    } catch (e) {
+      debugPrint('Error publishing event: $e');
+      return null;
+    }
   }
 }

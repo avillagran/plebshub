@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/feed/screens/feed_screen.dart';
+import '../features/feed/screens/compose_screen.dart';
 import '../features/auth/screens/auth_screen.dart';
 
 /// Provider for the app router.
@@ -20,6 +21,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/auth',
         name: 'auth',
         builder: (context, state) => const AuthScreen(),
+      ),
+      GoRoute(
+        path: '/compose',
+        name: 'compose',
+        builder: (context, state) => const ComposeScreen(),
       ),
       GoRoute(
         path: '/profile/:pubkey',

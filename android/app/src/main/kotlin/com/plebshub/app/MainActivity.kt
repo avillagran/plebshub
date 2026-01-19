@@ -1,4 +1,4 @@
-package cl.villagranquiroz.plebshub
+package com.plebshub.app
 
 import io.flutter.embedding.android.FlutterActivity
 
