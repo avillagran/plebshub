@@ -28,8 +28,8 @@ dependencies:
   isar_flutter_libs: ^3.1.0+1
 
   # Nostr (NDK)
-  # ndk: ^0.6.0
-  # ndk_rust_verifier: ^0.6.0  # Native platforms only
+  ndk: ^0.3.2
+  ndk_rust_verifier: ^0.3.1  # Native platforms only
 
   # UI utilities
   flutter_svg: ^2.0.10+1
@@ -39,6 +39,8 @@ dependencies:
   freezed_annotation: ^2.4.1
   json_annotation: ^4.9.0
   equatable: ^2.0.5
+  path_provider: ^2.1.2
+  flutter_secure_storage: ^9.0.0
 
 dev_dependencies:
   flutter_test:

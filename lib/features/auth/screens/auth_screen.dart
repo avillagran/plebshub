@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plebshub_ui/plebshub_ui.dart';
+
+import '../providers/auth_provider.dart';
+import '../providers/auth_state.dart';
 
 /// Authentication screen for login/signup.
 class AuthScreen extends ConsumerStatefulWidget {
@@ -13,8 +17,6 @@ class AuthScreen extends ConsumerStatefulWidget {
 
 class _AuthScreenState extends ConsumerState<AuthScreen> {
   final _nsecController = TextEditingController();
-  bool _isLoading = false;
-  String? _error;
 
   @override
   void dispose() {
@@ -23,56 +25,24 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
   }
 
   Future<void> _generateNewKey() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
-    try {
-      // TODO: Generate keypair with NDK
-      await Future.delayed(const Duration(seconds: 1));
-
-      if (mounted) {
-        _showKeyGeneratedDialog();
-      }
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
+    final authNotifier = ref.read(authProvider.notifier);
+    await authNotifier.generateNewIdentity();
   }
 
   Future<void> _importKey() async {
     final nsec = _nsecController.text.trim();
     if (nsec.isEmpty) {
-      setState(() => _error = 'Please enter your nsec key');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your nsec key')),
+      );
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
-    try {
-      // TODO: Validate and import key with NDK
-      await Future.delayed(const Duration(seconds: 1));
-
-      if (mounted) {
-        context.go('/');
-      }
-    } catch (e) {
-      setState(() => _error = 'Invalid nsec key');
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
+    final authNotifier = ref.read(authProvider.notifier);
+    await authNotifier.importFromNsec(nsec);
   }
 
-  void _showKeyGeneratedDialog() {
+  void _showKeyGeneratedDialog(AuthStateAuthenticated authState) {
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -102,9 +72,24 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     style: AppTypography.labelSmall,
                   ),
                   const SizedBox(height: 4),
-                  const SelectableText(
-                    'npub1...placeholder...',
-                    style: AppTypography.bodySmall,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SelectableText(
+                          authState.npub,
+                          style: AppTypography.bodySmall,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.copy, size: 16),
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: authState.npub));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Copied npub')),
+                          );
+                        },
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 12),
                   Text(
@@ -114,9 +99,24 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  const SelectableText(
-                    'nsec1...placeholder...',
-                    style: AppTypography.bodySmall,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SelectableText(
+                          authState.nsec,
+                          style: AppTypography.bodySmall,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.copy, size: 16),
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: authState.nsec));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Copied nsec')),
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -145,6 +145,32 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Listen to auth state changes
+    ref.listen<AuthState>(authProvider, (previous, next) {
+      if (next is AuthStateAuthenticated) {
+        // Show success dialog when key is generated
+        if (previous is AuthStateLoading &&
+            (previous.operation == 'generating')) {
+          _showKeyGeneratedDialog(next);
+        } else {
+          // Navigate to home on successful import
+          context.go('/');
+        }
+      } else if (next is AuthStateError) {
+        // Show error message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(next.message),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    });
+
+    final authState = ref.watch(authProvider);
+    final isLoading = authState is AuthStateLoading;
+    final errorMessage = authState is AuthStateError ? authState.message : null;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Login'),
@@ -194,8 +220,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     label: 'Generate New Key',
                     icon: Icons.add,
                     isExpanded: true,
-                    isLoading: _isLoading,
-                    onPressed: _generateNewKey,
+                    isLoading: isLoading,
+                    onPressed: isLoading ? null : _generateNewKey,
                   ),
                 ],
               ),
@@ -237,11 +263,12 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                       hintText: 'nsec1...',
                     ),
                     obscureText: true,
+                    enabled: !isLoading,
                   ),
-                  if (_error != null) ...[
+                  if (errorMessage != null) ...[
                     const SizedBox(height: 8),
                     Text(
-                      _error!,
+                      errorMessage,
                       style: AppTypography.labelSmall.copyWith(
                         color: AppColors.error,
                       ),
@@ -252,8 +279,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     label: 'Import Key',
                     icon: Icons.login,
                     isExpanded: true,
-                    isLoading: _isLoading,
-                    onPressed: _importKey,
+                    isLoading: isLoading,
+                    onPressed: isLoading ? null : _importKey,
                   ),
                 ],
               ),
