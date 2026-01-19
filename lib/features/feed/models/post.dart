@@ -53,6 +53,9 @@ class Post with _$Post {
 
     /// Root event ID (for threading)
     String? rootEventId,
+
+    /// Number of replies to this post
+    @Default(0) int replyCount,
   }) = _Post;
 
   factory Post.fromJson(Map<String, dynamic> json) => _$PostFromJson(json);

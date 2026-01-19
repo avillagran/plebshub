@@ -47,6 +47,9 @@ mixin _$Post {
   /// Root event ID (for threading)
   String? get rootEventId => throw _privateConstructorUsedError;
 
+  /// Number of replies to this post
+  int get replyCount => throw _privateConstructorUsedError;
+
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
   @JsonKey(ignore: true)
   $PostCopyWith<Post> get copyWith => throw _privateConstructorUsedError;
@@ -66,7 +69,8 @@ abstract class $PostCopyWith<$Res> {
       int repostsCount,
       int zapsCount,
       String? replyToId,
-      String? rootEventId});
+      String? rootEventId,
+      int replyCount});
 
   $PostAuthorCopyWith<$Res> get author;
 }
@@ -93,6 +97,7 @@ class _$PostCopyWithImpl<$Res, $Val extends Post>
     Object? zapsCount = null,
     Object? replyToId = freezed,
     Object? rootEventId = freezed,
+    Object? replyCount = null,
   }) {
     return _then(_value.copyWith(
       id: null == id
@@ -131,6 +136,10 @@ class _$PostCopyWithImpl<$Res, $Val extends Post>
           ? _value.rootEventId
           : rootEventId // ignore: cast_nullable_to_non_nullable
               as String?,
+      replyCount: null == replyCount
+          ? _value.replyCount
+          : replyCount // ignore: cast_nullable_to_non_nullable
+              as int,
     ) as $Val);
   }
 
@@ -159,7 +168,8 @@ abstract class _$$PostImplCopyWith<$Res> implements $PostCopyWith<$Res> {
       int repostsCount,
       int zapsCount,
       String? replyToId,
-      String? rootEventId});
+      String? rootEventId,
+      int replyCount});
 
   @override
   $PostAuthorCopyWith<$Res> get author;
@@ -184,6 +194,7 @@ class __$$PostImplCopyWithImpl<$Res>
     Object? zapsCount = null,
     Object? replyToId = freezed,
     Object? rootEventId = freezed,
+    Object? replyCount = null,
   }) {
     return _then(_$PostImpl(
       id: null == id
@@ -222,6 +233,10 @@ class __$$PostImplCopyWithImpl<$Res>
           ? _value.rootEventId
           : rootEventId // ignore: cast_nullable_to_non_nullable
               as String?,
+      replyCount: null == replyCount
+          ? _value.replyCount
+          : replyCount // ignore: cast_nullable_to_non_nullable
+              as int,
     ));
   }
 }
@@ -238,7 +253,8 @@ class _$PostImpl implements _Post {
       this.repostsCount = 0,
       this.zapsCount = 0,
       this.replyToId,
-      this.rootEventId});
+      this.rootEventId,
+      this.replyCount = 0});
 
   factory _$PostImpl.fromJson(Map<String, dynamic> json) =>
       _$$PostImplFromJson(json);
@@ -282,9 +298,14 @@ class _$PostImpl implements _Post {
   @override
   final String? rootEventId;
 
+  /// Number of replies to this post
+  @override
+  @JsonKey()
+  final int replyCount;
+
   @override
   String toString() {
-    return 'Post(id: $id, author: $author, content: $content, createdAt: $createdAt, reactionsCount: $reactionsCount, repostsCount: $repostsCount, zapsCount: $zapsCount, replyToId: $replyToId, rootEventId: $rootEventId)';
+    return 'Post(id: $id, author: $author, content: $content, createdAt: $createdAt, reactionsCount: $reactionsCount, repostsCount: $repostsCount, zapsCount: $zapsCount, replyToId: $replyToId, rootEventId: $rootEventId, replyCount: $replyCount)';
   }
 
   @override
@@ -306,13 +327,25 @@ class _$PostImpl implements _Post {
             (identical(other.replyToId, replyToId) ||
                 other.replyToId == replyToId) &&
             (identical(other.rootEventId, rootEventId) ||
-                other.rootEventId == rootEventId));
+                other.rootEventId == rootEventId) &&
+            (identical(other.replyCount, replyCount) ||
+                other.replyCount == replyCount));
   }
 
   @JsonKey(ignore: true)
   @override
-  int get hashCode => Object.hash(runtimeType, id, author, content, createdAt,
-      reactionsCount, repostsCount, zapsCount, replyToId, rootEventId);
+  int get hashCode => Object.hash(
+      runtimeType,
+      id,
+      author,
+      content,
+      createdAt,
+      reactionsCount,
+      repostsCount,
+      zapsCount,
+      replyToId,
+      rootEventId,
+      replyCount);
 
   @JsonKey(ignore: true)
   @override
@@ -338,7 +371,8 @@ abstract class _Post implements Post {
       final int repostsCount,
       final int zapsCount,
       final String? replyToId,
-      final String? rootEventId}) = _$PostImpl;
+      final String? rootEventId,
+      final int replyCount}) = _$PostImpl;
 
   factory _Post.fromJson(Map<String, dynamic> json) = _$PostImpl.fromJson;
 
@@ -378,6 +412,10 @@ abstract class _Post implements Post {
 
   /// Root event ID (for threading)
   String? get rootEventId;
+  @override
+
+  /// Number of replies to this post
+  int get replyCount;
   @override
   @JsonKey(ignore: true)
   _$$PostImplCopyWith<_$PostImpl> get copyWith =>

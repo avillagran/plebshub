@@ -4,7 +4,9 @@ import 'package:go_router/go_router.dart';
 
 import '../features/feed/screens/feed_screen.dart';
 import '../features/feed/screens/compose_screen.dart';
+import '../features/feed/screens/thread_screen.dart';
 import '../features/auth/screens/auth_screen.dart';
+import '../features/profile/screens/profile_screen.dart';
 
 /// Provider for the app router.
 final routerProvider = Provider<GoRouter>((ref) {
@@ -32,7 +34,15 @@ final routerProvider = Provider<GoRouter>((ref) {
         name: 'profile',
         builder: (context, state) {
           final pubkey = state.pathParameters['pubkey']!;
-          return ProfilePlaceholder(pubkey: pubkey);
+          return ProfileScreen(pubkey: pubkey);
+        },
+      ),
+      GoRoute(
+        path: '/thread/:eventId',
+        name: 'thread',
+        builder: (context, state) {
+          final eventId = state.pathParameters['eventId']!;
+          return ThreadScreen(eventId: eventId);
         },
       ),
       GoRoute(
@@ -60,19 +70,6 @@ final routerProvider = Provider<GoRouter>((ref) {
 });
 
 // Placeholder widgets - will be replaced with actual screens
-class ProfilePlaceholder extends StatelessWidget {
-  const ProfilePlaceholder({super.key, required this.pubkey});
-  final String pubkey;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Profile')),
-      body: Center(child: Text('Profile: $pubkey')),
-    );
-  }
-}
-
 class ChannelsPlaceholder extends StatelessWidget {
   const ChannelsPlaceholder({super.key});
 

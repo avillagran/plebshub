@@ -16,6 +16,7 @@ _$PostImpl _$$PostImplFromJson(Map<String, dynamic> json) => _$PostImpl(
       zapsCount: (json['zapsCount'] as num?)?.toInt() ?? 0,
       replyToId: json['replyToId'] as String?,
       rootEventId: json['rootEventId'] as String?,
+      replyCount: (json['replyCount'] as num?)?.toInt() ?? 0,
     );
 
 Map<String, dynamic> _$$PostImplToJson(_$PostImpl instance) =>
@@ -29,6 +30,7 @@ Map<String, dynamic> _$$PostImplToJson(_$PostImpl instance) =>
       'zapsCount': instance.zapsCount,
       'replyToId': instance.replyToId,
       'rootEventId': instance.rootEventId,
+      'replyCount': instance.replyCount,
     };
 
 _$PostAuthorImpl _$$PostAuthorImplFromJson(Map<String, dynamic> json) =>

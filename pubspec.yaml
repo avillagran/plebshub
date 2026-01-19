@@ -34,6 +34,7 @@ dependencies:
   # UI utilities
   flutter_svg: ^2.0.10+1
   cached_network_image: ^3.3.1
+  url_launcher: ^6.2.5
 
   # Utils
   freezed_annotation: ^2.4.1
