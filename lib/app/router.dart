@@ -7,9 +7,12 @@ import '../features/auth/providers/auth_state.dart';
 import '../features/auth/screens/auth_screen.dart';
 import '../features/feed/models/post.dart';
 import '../features/feed/screens/compose_screen.dart';
+import '../features/feed/screens/explore_screen.dart';
 import '../features/feed/screens/feed_screen.dart';
 import '../features/feed/screens/thread_screen.dart';
 import '../features/profile/screens/profile_screen.dart';
+import '../features/channels/screens/channels_list_screen.dart';
+import 'main_shell.dart';
 
 /// Provider for the app router.
 final routerProvider = Provider<GoRouter>((ref) {
@@ -33,55 +36,81 @@ final routerProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
-      GoRoute(
-        path: '/',
-        name: 'home',
-        builder: (context, state) => const FeedScreen(),
+      // Shell route wraps pages that should show the navigation
+      ShellRoute(
+        builder: (context, state, child) {
+          // Update navigation index based on current route
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            final container = ProviderScope.containerOf(context);
+            final index = getNavigationIndexFromLocation(state.matchedLocation);
+            container.read(navigationIndexProvider.notifier).state = index;
+          });
+          return MainShell(child: child);
+        },
+        routes: [
+          GoRoute(
+            path: '/',
+            name: 'home',
+            builder: (context, state) => const FeedScreen(),
+          ),
+          GoRoute(
+            path: '/explore',
+            name: 'explore',
+            builder: (context, state) => const ExploreScreen(),
+          ),
+          GoRoute(
+            path: '/channels',
+            name: 'channels',
+            builder: (context, state) => const ChannelsListScreen(),
+          ),
+          GoRoute(
+            path: '/messages',
+            name: 'messages',
+            builder: (context, state) => const MessagesPlaceholder(),
+          ),
+          GoRoute(
+            path: '/notifications',
+            name: 'notifications',
+            builder: (context, state) => const NotificationsPlaceholder(),
+          ),
+          GoRoute(
+            path: '/profile/:pubkey',
+            name: 'profile',
+            builder: (context, state) {
+              final pubkey = state.pathParameters['pubkey']!;
+              return ProfileScreen(pubkey: pubkey);
+            },
+          ),
+          GoRoute(
+            path: '/thread/:eventId',
+            name: 'thread',
+            builder: (context, state) {
+              final eventId = state.pathParameters['eventId']!;
+              final initialPost = state.extra as Post?;
+              return ThreadScreen(
+                eventId: eventId,
+                initialPost: initialPost,
+              );
+            },
+          ),
+          GoRoute(
+            path: '/settings',
+            name: 'settings',
+            builder: (context, state) => const SettingsPlaceholder(),
+          ),
+        ],
       ),
+      // Auth route outside shell (no navigation)
       GoRoute(
         path: '/auth',
         name: 'auth',
         builder: (context, state) => const AuthScreen(),
       ),
+      // Compose as modal (outside shell)
       GoRoute(
         path: '/compose',
         name: 'compose',
         builder: (context, state) => const ComposeScreen(),
-      ),
-      GoRoute(
-        path: '/profile/:pubkey',
-        name: 'profile',
-        builder: (context, state) {
-          final pubkey = state.pathParameters['pubkey']!;
-          return ProfileScreen(pubkey: pubkey);
-        },
-      ),
-      GoRoute(
-        path: '/thread/:eventId',
-        name: 'thread',
-        builder: (context, state) {
-          final eventId = state.pathParameters['eventId']!;
-          final initialPost = state.extra as Post?;
-          return ThreadScreen(
-            eventId: eventId,
-            initialPost: initialPost,
-          );
-        },
-      ),
-      GoRoute(
-        path: '/channels',
-        name: 'channels',
-        builder: (context, state) => const ChannelsPlaceholder(),
-      ),
-      GoRoute(
-        path: '/messages',
-        name: 'messages',
-        builder: (context, state) => const MessagesPlaceholder(),
-      ),
-      GoRoute(
-        path: '/settings',
-        name: 'settings',
-        builder: (context, state) => const SettingsPlaceholder(),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(
@@ -104,27 +133,21 @@ class _AuthStateNotifier extends ChangeNotifier {
 }
 
 // Placeholder widgets - will be replaced with actual screens
-class ChannelsPlaceholder extends StatelessWidget {
-  const ChannelsPlaceholder({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Channels')),
-      body: const Center(child: Text('Channels - Coming soon')),
-    );
-  }
-}
-
 class MessagesPlaceholder extends StatelessWidget {
   const MessagesPlaceholder({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Messages')),
-      body: const Center(child: Text('Messages - Coming soon')),
-    );
+    return const Center(child: Text('Messages - Coming soon'));
+  }
+}
+
+class NotificationsPlaceholder extends StatelessWidget {
+  const NotificationsPlaceholder({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(child: Text('Notifications - Coming soon'));
   }
 }
 
@@ -133,9 +156,6 @@ class SettingsPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
-      body: const Center(child: Text('Settings - Coming soon')),
-    );
+    return const Center(child: Text('Settings - Coming soon'));
   }
 }

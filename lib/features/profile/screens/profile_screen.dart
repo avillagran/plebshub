@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plebshub_ui/plebshub_ui.dart';
 
 import '../../../shared/shared.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../auth/providers/auth_state.dart';
 import '../../feed/widgets/post_card.dart';
 import '../models/profile.dart';
 import '../providers/profile_provider.dart';
@@ -75,7 +78,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         SliverAppBar(
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () => context.pop(),
+            onPressed: () {
+              if (context.canPop()) {
+                context.pop();
+              } else {
+                context.go('/');
+              }
+            },
           ),
           title: const Text('Profile'),
         ),
@@ -131,7 +140,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             pinned: true,
             leading: IconButton(
               icon: const Icon(Icons.arrow_back),
-              onPressed: () => context.pop(),
+              onPressed: () {
+                if (context.canPop()) {
+                  context.pop();
+                } else {
+                  context.go('/');
+                }
+              },
             ),
             title: Text(state.profile.nameForDisplay),
             actions: [
@@ -162,7 +177,30 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
                       ],
                     ),
                   ),
-                  if (!state.isOwnProfile) ...[
+                  if (state.isOwnProfile) ...[
+                    const PopupMenuDivider(),
+                    const PopupMenuItem(
+                      value: 'copy_nsec',
+                      child: Row(
+                        children: [
+                          Icon(Icons.key, size: 20),
+                          SizedBox(width: 8),
+                          Text('Copy nsec'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuDivider(),
+                    const PopupMenuItem(
+                      value: 'logout',
+                      child: Row(
+                        children: [
+                          Icon(Icons.logout, size: 20, color: Colors.red),
+                          SizedBox(width: 8),
+                          Text('Logout', style: TextStyle(color: Colors.red)),
+                        ],
+                      ),
+                    ),
+                  ] else ...[
                     const PopupMenuDivider(),
                     const PopupMenuItem(
                       value: 'mute',
@@ -338,16 +376,35 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
   void _handleMenuAction(String action, Profile profile) {
     switch (action) {
       case 'copy_pubkey':
-        // TODO: Copy to clipboard
+        Clipboard.setData(ClipboardData(text: profile.pubkey));
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Pubkey copied to clipboard')),
         );
         break;
       case 'copy_npub':
-        // TODO: Copy npub to clipboard
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('npub copied to clipboard')),
-        );
+        final authState = ref.read(authProvider);
+        final npub = authState is AuthStateAuthenticated ? authState.npub : '';
+        if (npub.isNotEmpty) {
+          Clipboard.setData(ClipboardData(text: npub));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('npub copied to clipboard')),
+          );
+        }
+        break;
+      case 'copy_nsec':
+        final authState = ref.read(authProvider);
+        if (authState is AuthStateAuthenticated) {
+          Clipboard.setData(ClipboardData(text: authState.nsec));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('nsec copied - keep it secret!'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        break;
+      case 'logout':
+        _showLogoutConfirmation();
         break;
       case 'mute':
         ScaffoldMessenger.of(context).showSnackBar(
@@ -360,6 +417,33 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         );
         break;
     }
+  }
+
+  void _showLogoutConfirmation() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Logout'),
+        content: const Text(
+          'Are you sure you want to logout? Make sure you have your nsec backed up.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              ref.read(authProvider.notifier).logout();
+              context.go('/');
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Logout'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleFollowTap(ProfileScreenStateLoaded state) {
