@@ -126,7 +126,64 @@ class MainShell extends ConsumerWidget {
               child: const Icon(Icons.edit),
             )
           : null,
-      body: child,
+      body: Responsive.isMobile(context)
+          ? child
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildBreadcrumbHeader(context, selectedIndex),
+                Expanded(child: child),
+              ],
+            ),
+    );
+  }
+
+  /// Builds the breadcrumb header for desktop/tablet screens.
+  Widget _buildBreadcrumbHeader(BuildContext context, int selectedIndex) {
+    final currentItem = _navigationItems[selectedIndex];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: Theme.of(context).dividerColor,
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.bolt, color: AppColors.primary, size: 20),
+          const SizedBox(width: 8),
+          Text(
+            'PlebsHub',
+            style: AppTypography.titleMedium.copyWith(
+              color: AppColors.primary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Icon(
+            Icons.chevron_right,
+            size: 20,
+            color: Theme.of(context).textTheme.bodySmall?.color,
+          ),
+          const SizedBox(width: 8),
+          Icon(
+            currentItem.selectedIcon,
+            size: 20,
+            color: Theme.of(context).textTheme.bodyLarge?.color,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            currentItem.label,
+            style: AppTypography.titleMedium.copyWith(
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
