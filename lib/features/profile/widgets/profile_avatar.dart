@@ -1,8 +1,8 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plebshub_ui/plebshub_ui.dart';
 
+import '../../../shared/widgets/smart_image.dart';
 import '../providers/profile_cache_provider.dart';
 
 /// A reactive widget that displays a user's avatar.
@@ -54,7 +54,7 @@ class ProfileAvatar extends ConsumerWidget {
       // Profile has a picture URL - load it
       avatar = ClipRRect(
         borderRadius: effectiveBorderRadius,
-        child: CachedNetworkImage(
+        child: SmartImage(
           imageUrl: pictureUrl,
           width: size,
           height: size,
@@ -153,7 +153,7 @@ class ProfileAvatarSimple extends ConsumerWidget {
 
     if (pictureUrl != null && pictureUrl.isNotEmpty) {
       avatar = ClipOval(
-        child: CachedNetworkImage(
+        child: SmartImage(
           imageUrl: pictureUrl,
           width: size,
           height: size,

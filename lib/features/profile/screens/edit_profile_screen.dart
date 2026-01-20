@@ -1,10 +1,10 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plebshub_ui/plebshub_ui.dart';
 
 import '../../../services/profile_service.dart';
+import '../../../shared/widgets/smart_image.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../auth/providers/auth_state.dart';
 import '../models/profile.dart';
@@ -510,7 +510,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(8),
-      child: CachedNetworkImage(
+      child: SmartImage(
         imageUrl: url,
         height: height,
         width: double.infinity,
@@ -564,7 +564,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
     }
 
     return ClipOval(
-      child: CachedNetworkImage(
+      child: SmartImage(
         imageUrl: url,
         width: size,
         height: size,

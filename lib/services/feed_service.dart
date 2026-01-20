@@ -380,7 +380,9 @@ List<Post> _parseEventsIsolate(List<Map<String, dynamic>> rawEvents) {
       // Extract reply and root event IDs from tags
       String? replyToId;
       String? rootEventId;
+      String? replyToAuthorPubkey;
 
+      // First pass: extract event references with markers
       for (final tag in tags) {
         if (tag.isNotEmpty && tag[0] == 'e') {
           if (tag.length > 3) {
@@ -393,6 +395,24 @@ List<Post> _parseEventsIsolate(List<Map<String, dynamic>> rawEvents) {
           } else if (replyToId == null) {
             replyToId = tag[1] as String;
           }
+        }
+      }
+
+      // Second pass: extract author pubkey from p tags
+      // NIP-10: ["p", "<pubkey>", "", "reply"] or just ["p", "<pubkey>"]
+      for (final tag in tags) {
+        if (tag.isNotEmpty && tag[0] == 'p') {
+          final pPubkey = tag[1] as String;
+          // Check for marker-based p tag (NIP-10 preferred)
+          if (tag.length > 3) {
+            final marker = tag[3] as String?;
+            if (marker == 'reply') {
+              replyToAuthorPubkey = pPubkey;
+              break;
+            }
+          }
+          // Fallback: first p tag is likely the reply-to author
+          replyToAuthorPubkey ??= pPubkey;
         }
       }
 
@@ -413,6 +433,7 @@ List<Post> _parseEventsIsolate(List<Map<String, dynamic>> rawEvents) {
         createdAt: DateTime.fromMillisecondsSinceEpoch(createdAt * 1000),
         replyToId: replyToId,
         rootEventId: rootEventId,
+        replyToAuthorPubkey: replyToId != null ? replyToAuthorPubkey : null,
       ));
     } catch (e) {
       // Skip invalid events

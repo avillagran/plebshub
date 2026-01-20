@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:ndk/ndk.dart';
+import 'package:ndk/shared/nips/nip01/bip340.dart';
 
 import '../core/constants/cache_config.dart';
 import '../features/profile/models/profile.dart';
@@ -73,8 +76,7 @@ class ProfileService {
     // Also clear from disk cache
     if (_cacheService.isInitialized) {
       try {
-        final count = await _cacheService.removeByPrefix(CacheConfig.profileKeyPrefix);
-        debugPrint('Cleared $count profiles from disk cache');
+        await _cacheService.removeByPrefix(CacheConfig.profileKeyPrefix);
       } catch (e) {
         debugPrint('Error clearing profiles from disk cache: $e');
       }
@@ -106,7 +108,6 @@ class ProfileService {
         if (cached != null) {
           final profile = Profile.fromJson(cached);
           _profileCache[pubkey] = profile;
-          debugPrint('Loaded profile from disk cache: ${profile.nameForDisplay}');
           return profile;
         }
       } catch (e) {
@@ -116,8 +117,6 @@ class ProfileService {
     }
 
     try {
-      debugPrint('Fetching profile for pubkey: ${pubkey.substring(0, 8)}...');
-
       final filter = Filter(
         kinds: [0], // kind:0 = metadata
         authors: [pubkey],
@@ -130,7 +129,6 @@ class ProfileService {
       );
 
       if (events.isEmpty) {
-        debugPrint('No profile found for pubkey: ${pubkey.substring(0, 8)}...');
         // Return placeholder profile
         final placeholder = Profile.placeholder(pubkey);
         _profileCache[pubkey] = placeholder;
@@ -152,7 +150,6 @@ class ProfileService {
             profile.toJson(),
             CacheConfig.profilesTtl,
           );
-          debugPrint('Saved profile to disk cache: ${profile.nameForDisplay}');
         } catch (e) {
           debugPrint('Error saving profile to disk cache: $e');
           // Continue even if caching fails
@@ -223,8 +220,6 @@ class ProfileService {
     }
 
     try {
-      debugPrint('Batch fetching ${stillNeedToFetch.length} profiles...');
-
       final filter = Filter(
         kinds: [0],
         authors: stillNeedToFetch,
@@ -275,8 +270,6 @@ class ProfileService {
         }
       }
 
-      debugPrint('Fetched ${eventsByPubkey.length} profiles, ${stillNeedToFetch.length - eventsByPubkey.length} not found');
-
       return results;
     } catch (e) {
       debugPrint('Error batch fetching profiles: $e');
@@ -300,8 +293,6 @@ class ProfileService {
     DateTime? until,
   }) async {
     try {
-      debugPrint('Fetching posts for pubkey: ${pubkey.substring(0, 8)}...');
-
       final filter = Filter(
         kinds: [1], // kind:1 = text notes
         authors: [pubkey],
@@ -317,7 +308,6 @@ class ProfileService {
       // Sort by creation time (newest first)
       events.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-      debugPrint('Fetched ${events.length} posts');
       return events;
     } catch (e) {
       debugPrint('Error fetching user posts: $e');
@@ -494,7 +484,10 @@ class ProfileService {
     }
   }
 
-  /// Follow a user by updating the contact list.
+  /// Follow a user by updating the contact list (NIP-02).
+  ///
+  /// Fetches the current user's contact list, adds the target pubkey if not
+  /// already following, and publishes the updated kind:3 event.
   ///
   /// Returns true if successful.
   Future<bool> followUser({
@@ -502,12 +495,76 @@ class ProfileService {
     required String targetPubkey,
     required String privateKey,
   }) async {
-    // TODO: Implement contact list update (kind:3)
-    debugPrint('followUser not yet implemented');
-    return false;
+    try {
+      // Step 1: Fetch current contact list (kind:3)
+      final filter = Filter(
+        kinds: [3],
+        authors: [currentUserPubkey],
+        limit: 1,
+      );
+
+      final events = await _ndkService.fetchEvents(
+        filter: filter,
+        timeout: const Duration(seconds: 5),
+      );
+
+      // Step 2: Build new tags list preserving existing contacts
+      List<List<String>> newTags = [];
+      String content = '';
+
+      if (events.isNotEmpty) {
+        // Use existing contact list as base
+        final existingContactList = events.first;
+        content = existingContactList.content;
+
+        // Check if already following
+        final alreadyFollowing = existingContactList.tags.any((tag) =>
+            tag.length >= 2 && tag[0] == 'p' && tag[1] == targetPubkey);
+
+        if (alreadyFollowing) {
+          return true; // Already following, consider it success
+        }
+
+        // Copy existing tags
+        newTags = existingContactList.tags.map((tag) => List<String>.from(tag)).toList();
+      }
+
+      // Step 3: Add new contact with standard tag format ["p", "<pubkey>", "<relay-url>", "<petname>"]
+      // Using empty relay URL and petname for simplicity
+      newTags.add(['p', targetPubkey, '', '']);
+
+      // Step 4: Create and sign the new kind:3 event
+      final event = Nip01Event(
+        pubKey: currentUserPubkey,
+        kind: 3,
+        content: content,
+        tags: newTags,
+        createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      );
+
+      event.sign(privateKey);
+
+      // Step 5: Broadcast to relays
+      final broadcastResponse = _ndkService.ndk.broadcast.broadcast(
+        nostrEvent: event,
+      );
+
+      await broadcastResponse.broadcastDoneFuture;
+
+      // Step 6: Invalidate following cache
+      await _invalidateFollowingCache(currentUserPubkey);
+
+      return true;
+    } catch (e) {
+      debugPrint('Error following user: $e');
+      return false;
+    }
   }
 
-  /// Unfollow a user by updating the contact list.
+  /// Unfollow a user by updating the contact list (NIP-02).
+  ///
+  /// Fetches the current user's contact list, removes the target pubkey,
+  /// and publishes the updated kind:3 event.
   ///
   /// Returns true if successful.
   Future<bool> unfollowUser({
@@ -515,21 +572,163 @@ class ProfileService {
     required String targetPubkey,
     required String privateKey,
   }) async {
-    // TODO: Implement contact list update (kind:3)
-    debugPrint('unfollowUser not yet implemented');
-    return false;
+    try {
+      // Step 1: Fetch current contact list (kind:3)
+      final filter = Filter(
+        kinds: [3],
+        authors: [currentUserPubkey],
+        limit: 1,
+      );
+
+      final events = await _ndkService.fetchEvents(
+        filter: filter,
+        timeout: const Duration(seconds: 5),
+      );
+
+      if (events.isEmpty) {
+        return true; // No contact list means not following anyone
+      }
+
+      final existingContactList = events.first;
+
+      // Step 2: Check if actually following this user
+      final isFollowing = existingContactList.tags.any((tag) =>
+          tag.length >= 2 && tag[0] == 'p' && tag[1] == targetPubkey);
+
+      if (!isFollowing) {
+        return true; // Not following, consider it success
+      }
+
+      // Step 3: Build new tags list excluding the target pubkey
+      final newTags = existingContactList.tags
+          .where((tag) => !(tag.length >= 2 && tag[0] == 'p' && tag[1] == targetPubkey))
+          .map((tag) => List<String>.from(tag))
+          .toList();
+
+      // Step 4: Create and sign the new kind:3 event
+      final event = Nip01Event(
+        pubKey: currentUserPubkey,
+        kind: 3,
+        content: existingContactList.content,
+        tags: newTags,
+        createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      );
+
+      event.sign(privateKey);
+
+      // Step 5: Broadcast to relays
+      final broadcastResponse = _ndkService.ndk.broadcast.broadcast(
+        nostrEvent: event,
+      );
+
+      await broadcastResponse.broadcastDoneFuture;
+
+      // Step 6: Invalidate following cache
+      await _invalidateFollowingCache(currentUserPubkey);
+
+      return true;
+    } catch (e) {
+      debugPrint('Error unfollowing user: $e');
+      return false;
+    }
   }
 
   /// Update the user's profile metadata.
   ///
+  /// Creates a kind:0 event with the profile data as JSON content,
+  /// signs it with the private key, and publishes to relays.
+  ///
   /// Returns the published event if successful, null otherwise.
+  ///
+  /// Example:
+  /// ```dart
+  /// final updatedProfile = currentProfile.copyWith(
+  ///   name: 'NewName',
+  ///   about: 'Updated bio',
+  /// );
+  /// final event = await profileService.updateProfile(
+  ///   profile: updatedProfile,
+  ///   privateKey: userPrivateKey,
+  /// );
+  /// ```
   Future<Nip01Event?> updateProfile({
     required Profile profile,
     required String privateKey,
   }) async {
-    // TODO: Implement profile update (kind:0)
-    debugPrint('updateProfile not yet implemented');
-    return null;
+    try {
+      // Ensure relays are connected
+      await _ndkService.connectToRelays();
+
+      // Build the metadata JSON content (NIP-01 format)
+      // Only include non-null fields
+      final metadata = <String, dynamic>{};
+      if (profile.name != null) metadata['name'] = profile.name;
+      if (profile.displayName != null) metadata['display_name'] = profile.displayName;
+      if (profile.about != null) metadata['about'] = profile.about;
+      if (profile.picture != null) metadata['picture'] = profile.picture;
+      if (profile.banner != null) metadata['banner'] = profile.banner;
+      if (profile.nip05 != null) metadata['nip05'] = profile.nip05;
+      if (profile.lud16 != null) metadata['lud16'] = profile.lud16;
+      if (profile.website != null) metadata['website'] = profile.website;
+
+      final content = jsonEncode(metadata);
+
+      // Get public key from private key to verify it matches the profile
+      final publicKey = Bip340.getPublicKey(privateKey);
+      if (publicKey != profile.pubkey) {
+        debugPrint('Error: Private key does not match profile pubkey');
+        return null;
+      }
+
+      // Create kind:0 metadata event
+      final event = Nip01Event(
+        pubKey: publicKey,
+        kind: 0,
+        content: content,
+        tags: [], // kind:0 typically has no tags
+        createdAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      );
+
+      // Sign the event
+      event.sign(privateKey);
+
+      // Broadcast to all connected relays
+      final broadcastResponse = _ndkService.ndk.broadcast.broadcast(
+        nostrEvent: event,
+      );
+
+      // Wait for broadcast to complete
+      await broadcastResponse.broadcastDoneFuture;
+
+      // Update local cache with the new profile including the new timestamp
+      final updatedProfile = profile.copyWith(
+        createdAt: DateTime.fromMillisecondsSinceEpoch(event.createdAt * 1000),
+      );
+      _profileCache[profile.pubkey] = updatedProfile;
+
+      // Save to disk cache
+      if (_cacheService.isInitialized) {
+        final cacheKey = '${CacheConfig.profileKeyPrefix}${profile.pubkey}';
+        try {
+          await _cacheService.set(
+            cacheKey,
+            updatedProfile.toJson(),
+            CacheConfig.profilesTtl,
+          );
+        } catch (e) {
+          debugPrint('Error saving profile to disk cache: $e');
+          // Continue even if caching fails
+        }
+      }
+
+      // Notify listeners of the profile update
+      _notifyListeners(profile.pubkey, updatedProfile);
+
+      return event;
+    } catch (e) {
+      debugPrint('Error updating profile: $e');
+      return null;
+    }
   }
 
   // Update listeners for real-time profile updates (stub)
@@ -549,6 +748,26 @@ class ProfileService {
   void _notifyListeners(String pubkey, Profile profile) {
     for (final listener in _updateListeners) {
       listener(pubkey, profile);
+    }
+  }
+
+  /// Invalidate cached following data for a user.
+  ///
+  /// Called after follow/unfollow operations to ensure fresh data is fetched.
+  Future<void> _invalidateFollowingCache(String pubkey) async {
+    if (_cacheService.isInitialized) {
+      try {
+        // Clear following list cache
+        final followingCacheKey = '${CacheConfig.followingKeyPrefix}$pubkey';
+        await _cacheService.remove(followingCacheKey);
+
+        // Clear the following feed cache since it depends on the contact list
+        final feedCacheKey = '${CacheConfig.feedKeyPrefix}following_$pubkey';
+        await _cacheService.remove(feedCacheKey);
+      } catch (e) {
+        debugPrint('Error invalidating following cache: $e');
+        // Continue even if cache invalidation fails
+      }
     }
   }
 }

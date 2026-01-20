@@ -1,10 +1,13 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:isar/isar.dart';
 import 'package:ndk/ndk.dart';
 
 import '../../../services/database_service.dart';
+import '../../../services/feed_service.dart';
 import '../../../services/ndk_service.dart';
 import '../../../services/thread_service.dart';
 import '../models/nostr_event.dart';
@@ -77,6 +80,8 @@ class FeedStateLoaded extends FeedState {
     this.isLoadingMore = false,
     this.hasMore = true,
     this.oldestTimestamp,
+    this.newPostsCount = 0,
+    this.pendingPosts = const [],
   });
 
   final List<Post> posts;
@@ -90,18 +95,28 @@ class FeedStateLoaded extends FeedState {
   /// Timestamp of the oldest post for pagination cursor.
   final int? oldestTimestamp;
 
+  /// Number of new posts waiting to be shown.
+  final int newPostsCount;
+
+  /// Posts that arrived while user was viewing feed (not yet merged).
+  final List<Post> pendingPosts;
+
   /// Create a copy with updated fields.
   FeedStateLoaded copyWith({
     List<Post>? posts,
     bool? isLoadingMore,
     bool? hasMore,
     int? oldestTimestamp,
+    int? newPostsCount,
+    List<Post>? pendingPosts,
   }) {
     return FeedStateLoaded(
       posts: posts ?? this.posts,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       hasMore: hasMore ?? this.hasMore,
       oldestTimestamp: oldestTimestamp ?? this.oldestTimestamp,
+      newPostsCount: newPostsCount ?? this.newPostsCount,
+      pendingPosts: pendingPosts ?? this.pendingPosts,
     );
   }
 }
@@ -120,6 +135,10 @@ class FeedNotifier extends StateNotifier<FeedState> {
   final _ndkService = NdkService.instance;
   final _dbService = DatabaseService.instance;
   final _threadService = ThreadService.instance;
+  final _feedService = FeedService.instance;
+
+  /// The current user's public key (set when loading following feed).
+  String? _currentUserPubkey;
 
   /// Load the global feed (recent kind:1 notes).
   ///
@@ -132,10 +151,6 @@ class FeedNotifier extends StateNotifier<FeedState> {
       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final since = now - FeedConfig.initialTimeWindowSeconds;
 
-      debugPrint(
-        'Loading global feed (limit: ${FeedConfig.initialLoadLimit}, '
-        'since: ${DateTime.fromMillisecondsSinceEpoch(since * 1000)})...',
-      );
 
       // Create filter for kind:1 (text notes) with time window
       final filter = Filter(
@@ -148,7 +163,6 @@ class FeedNotifier extends StateNotifier<FeedState> {
       final ndkEvents = await _ndkService.fetchEvents(filter: filter);
 
       if (ndkEvents.isEmpty) {
-        debugPrint('No events found in global feed');
         state = const FeedStateLoaded(
           posts: [],
           hasMore: true, // Still might have older posts
@@ -167,7 +181,6 @@ class FeedNotifier extends StateNotifier<FeedState> {
           ? posts.last.createdAt.millisecondsSinceEpoch ~/ 1000
           : null;
 
-      debugPrint('Loaded ${posts.length} posts');
       state = FeedStateLoaded(
         posts: posts,
         hasMore: posts.length >= FeedConfig.paginationBatchSize,
@@ -178,6 +191,130 @@ class FeedNotifier extends StateNotifier<FeedState> {
       state = FeedStateError(
         message: 'Failed to load feed: ${e.toString()}',
       );
+    }
+  }
+
+  /// Load the following feed (posts from users the current user follows).
+  ///
+  /// Uses cache-first strategy:
+  /// 1. Immediately loads and displays cached posts from Isar database
+  /// 2. Fetches new posts from relays in the background
+  /// 3. New posts are stored as pending (not merged immediately)
+  /// 4. UI shows "X nuevos" button when new posts arrive
+  ///
+  /// Falls back to loading state if no cache exists.
+  Future<void> loadFollowingFeed({required String userPubkey}) async {
+    _currentUserPubkey = userPubkey;
+
+    try {
+
+      // Step 1: Load cached posts FIRST (before any network call)
+      final cachedPosts = await _loadFromCache();
+
+      if (cachedPosts.isNotEmpty) {
+        // Calculate oldest timestamp for pagination
+        final oldestTimestamp =
+            cachedPosts.last.createdAt.millisecondsSinceEpoch ~/ 1000;
+
+        // Show cached posts INSTANTLY (no loading spinner)
+        state = FeedStateLoaded(
+          posts: cachedPosts,
+          hasMore: true,
+          oldestTimestamp: oldestTimestamp,
+        );
+
+        // Step 2: Fetch new posts in background (fire-and-forget)
+        unawaited(_fetchFollowingPostsInBackground(userPubkey));
+      } else {
+        // No cache - show loading state and wait for network
+        state = const FeedStateLoading();
+
+        // Listen to the stream and update state with each batch
+        await for (final batch in _feedService.streamFollowingFeed(
+          userPubkey: userPubkey,
+          limit: FeedConfig.initialLoadLimit,
+          timeWindowSeconds: FeedConfig.initialTimeWindowSeconds,
+        )) {
+          // Sort posts by creation time (newest first)
+          final posts = List<Post>.from(batch.posts)
+            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+          // Calculate oldest timestamp for pagination
+          final oldestTimestamp = posts.isNotEmpty
+              ? posts.last.createdAt.millisecondsSinceEpoch ~/ 1000
+              : null;
+
+          state = FeedStateLoaded(
+            posts: posts,
+            hasMore: batch.hasMore,
+            oldestTimestamp: oldestTimestamp,
+          );
+
+          // If batch is complete, we're done
+          if (batch.isComplete) break;
+        }
+
+        // If no posts were loaded, show empty state
+        if (state is FeedStateLoading) {
+          state = const FeedStateLoaded(
+            posts: [],
+            hasMore: false,
+          );
+        }
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Error loading following feed: $e\n$stackTrace');
+      state = FeedStateError(
+        message: 'Failed to load feed: ${e.toString()}',
+      );
+    }
+  }
+
+  /// Fetch new posts from following feed in background.
+  ///
+  /// This method fetches posts without blocking the UI. New posts are
+  /// stored as pending and shown via "X nuevos" button.
+  Future<void> _fetchFollowingPostsInBackground(String userPubkey) async {
+    try {
+      final currentState = state;
+      final existingIds = <String>{};
+
+      // Collect IDs of posts already displayed
+      if (currentState is FeedStateLoaded) {
+        existingIds.addAll(currentState.posts.map((p) => p.id));
+        existingIds.addAll(currentState.pendingPosts.map((p) => p.id));
+      }
+
+      // Stream posts from relays
+      await for (final batch in _feedService.streamFollowingFeed(
+        userPubkey: userPubkey,
+        limit: FeedConfig.initialLoadLimit,
+        timeWindowSeconds: FeedConfig.initialTimeWindowSeconds,
+      )) {
+        // Sort posts by creation time (newest first)
+        final allPosts = List<Post>.from(batch.posts)
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+        // Filter to only new posts (not already displayed)
+        final newPosts = allPosts
+            .where((post) => !existingIds.contains(post.id))
+            .toList();
+
+        // Update state with pending posts
+        final afterFetchState = state;
+        if (afterFetchState is FeedStateLoaded && newPosts.isNotEmpty) {
+          state = afterFetchState.copyWith(
+            newPostsCount: newPosts.length,
+            pendingPosts: newPosts,
+          );
+        }
+
+        // If batch is complete, we're done
+        if (batch.isComplete) break;
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Error fetching following feed in background: $e\n$stackTrace');
+      // Keep showing cached content - don't update state on error
     }
   }
 
@@ -201,12 +338,6 @@ class FeedNotifier extends StateNotifier<FeedState> {
     state = currentState.copyWith(isLoadingMore: true);
 
     try {
-      debugPrint(
-        'Loading more posts (until: '
-        '${DateTime.fromMillisecondsSinceEpoch(until * 1000)}, '
-        'limit: ${FeedConfig.paginationBatchSize})...',
-      );
-
       // Create filter for older posts
       final filter = Filter(
         kinds: [1], // kind:1 = text notes
@@ -218,7 +349,6 @@ class FeedNotifier extends StateNotifier<FeedState> {
       final ndkEvents = await _ndkService.fetchEvents(filter: filter);
 
       if (ndkEvents.isEmpty) {
-        debugPrint('No more posts available');
         state = currentState.copyWith(
           isLoadingMore: false,
           hasMore: false,
@@ -237,10 +367,6 @@ class FeedNotifier extends StateNotifier<FeedState> {
 
       // Enforce memory limit - discard oldest posts if exceeded
       if (combinedPosts.length > FeedConfig.maxPostsInMemory) {
-        debugPrint(
-          'Trimming posts from ${combinedPosts.length} '
-          'to ${FeedConfig.maxPostsInMemory}',
-        );
         combinedPosts = combinedPosts.sublist(0, FeedConfig.maxPostsInMemory);
       }
 
@@ -249,15 +375,14 @@ class FeedNotifier extends StateNotifier<FeedState> {
           ? combinedPosts.last.createdAt.millisecondsSinceEpoch ~/ 1000
           : null;
 
-      debugPrint('Loaded ${newPosts.length} more posts, total: ${combinedPosts.length}');
       state = FeedStateLoaded(
         posts: combinedPosts,
         isLoadingMore: false,
         hasMore: newPosts.length >= FeedConfig.paginationBatchSize,
         oldestTimestamp: newOldestTimestamp,
       );
-    } catch (e, stackTrace) {
-      debugPrint('Error loading more posts: $e\n$stackTrace');
+    } catch (e) {
+      debugPrint('Error loading more posts: $e');
       // Revert to previous state without loading indicator
       state = currentState.copyWith(isLoadingMore: false);
     }
@@ -266,7 +391,200 @@ class FeedNotifier extends StateNotifier<FeedState> {
   /// Refresh the feed.
   ///
   /// Resets to the latest posts, clearing any pagination state.
-  Future<void> refresh() => loadGlobalFeed();
+  /// If a user pubkey was set via [loadFollowingFeed], refreshes the
+  /// following feed. Otherwise, refreshes the global feed.
+  Future<void> refresh() {
+    if (_currentUserPubkey != null) {
+      return loadFollowingFeed(userPubkey: _currentUserPubkey!);
+    }
+    return loadGlobalFeed();
+  }
+
+  /// Clear the current user pubkey (call when user logs out).
+  void clearCurrentUser() {
+    _currentUserPubkey = null;
+  }
+
+  /// Load feed with cache-first strategy.
+  ///
+  /// 1. Immediately loads and displays cached posts from database
+  /// 2. Fetches new posts from relays in the background (non-blocking)
+  /// 3. New posts are stored as pending (not merged immediately)
+  /// 4. UI shows "X nuevos" button when new posts arrive
+  Future<void> loadFeedCacheFirst() async {
+    // Step 1: Load from cache SYNCHRONOUSLY first to show instant content
+    // Note: _loadFromCache() returns posts already sorted by createdAt DESC
+    final cachedPosts = await _loadFromCache();
+
+    if (cachedPosts.isNotEmpty) {
+      // Calculate oldest timestamp for pagination
+      final oldestTimestamp =
+          cachedPosts.last.createdAt.millisecondsSinceEpoch ~/ 1000;
+
+      state = FeedStateLoaded(
+        posts: cachedPosts,
+        hasMore: true,
+        oldestTimestamp: oldestTimestamp,
+      );
+
+      // Step 2: Fetch new posts in background (fire-and-forget, don't await)
+      // This allows the UI to show cached content immediately while fetching
+      unawaited(_fetchNewPostsInBackground());
+    } else {
+      // No cache, show loading state and wait for network
+      state = const FeedStateLoading();
+      await _fetchNewPostsInBackground();
+    }
+  }
+
+  /// Load posts from local database cache.
+  ///
+  /// Uses indexed queries for fast cache retrieval:
+  /// - Filters by kind:1 (text notes) using index
+  /// - Filters by createdAt using index
+  /// - Sorts by createdAt descending (newest first) using index
+  /// - Limits results to avoid loading entire database
+  Future<List<Post>> _loadFromCache() async {
+    try {
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final since = now - FeedConfig.initialTimeWindowSeconds;
+
+      // Use indexed query for efficient cache retrieval
+      // Query: kind == 1 AND createdAt > since, sorted by createdAt DESC, limit N
+      final cachedEvents = await _dbService.isar.nostrEvents
+          .filter()
+          .kindEqualTo(1)
+          .createdAtGreaterThan(since)
+          .sortByCreatedAtDesc()
+          .limit(FeedConfig.initialLoadLimit)
+          .findAll();
+
+      if (cachedEvents.isEmpty) {
+        return [];
+      }
+
+      // Convert to Posts (already sorted by query)
+      return cachedEvents.map(_convertToPost).toList();
+    } catch (e) {
+      debugPrint('Error loading from cache: $e');
+      return [];
+    }
+  }
+
+  /// Fetch new posts from relays and store as pending.
+  Future<void> _fetchNewPostsInBackground() async {
+    try {
+      final currentState = state;
+      final existingIds = <String>{};
+
+      // Collect IDs of posts already displayed
+      if (currentState is FeedStateLoaded) {
+        existingIds.addAll(currentState.posts.map((p) => p.id));
+        existingIds.addAll(currentState.pendingPosts.map((p) => p.id));
+      }
+
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final since = now - FeedConfig.initialTimeWindowSeconds;
+
+      // Create filter for kind:1 (text notes) with time window
+      final filter = Filter(
+        kinds: [1],
+        since: since,
+        limit: FeedConfig.initialLoadLimit,
+      );
+
+      // Fetch events from relays
+      final ndkEvents = await _ndkService.fetchEvents(filter: filter);
+
+      if (ndkEvents.isEmpty) {
+        // If we were loading (no cache), show empty state
+        if (state is FeedStateLoading) {
+          state = const FeedStateLoaded(
+            posts: [],
+            hasMore: false,
+          );
+        }
+        return;
+      }
+
+      // Parse events and save to DB
+      final allPosts = await _saveEventsToDatabase(ndkEvents);
+
+      // Filter to only new posts (not already displayed)
+      final newPosts = allPosts
+          .where((post) => !existingIds.contains(post.id))
+          .toList();
+
+      // Sort by creation time (newest first)
+      newPosts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      final afterFetchState = state;
+      if (afterFetchState is FeedStateLoaded) {
+        if (newPosts.isNotEmpty) {
+          // Add new posts as pending
+          state = afterFetchState.copyWith(
+            newPostsCount: newPosts.length,
+            pendingPosts: newPosts,
+          );
+        }
+      } else if (afterFetchState is FeedStateLoading) {
+        // We had no cache - show all posts directly
+        allPosts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+        final oldestTimestamp = allPosts.isNotEmpty
+            ? allPosts.last.createdAt.millisecondsSinceEpoch ~/ 1000
+            : null;
+
+        state = FeedStateLoaded(
+          posts: allPosts,
+          hasMore: allPosts.length >= FeedConfig.paginationBatchSize,
+          oldestTimestamp: oldestTimestamp,
+        );
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Error fetching new posts: $e\n$stackTrace');
+      // If we were loading (no cache), show error
+      if (state is FeedStateLoading) {
+        state = FeedStateError(
+          message: 'Failed to load feed: ${e.toString()}',
+        );
+      }
+      // Otherwise, keep showing cached content
+    }
+  }
+
+  /// Show pending new posts by merging them into the visible list.
+  ///
+  /// Called when user taps the "X nuevos" button.
+  void showNewPosts() {
+    final currentState = state;
+    if (currentState is! FeedStateLoaded) return;
+    if (currentState.pendingPosts.isEmpty) return;
+
+    // Merge pending posts at the top
+    final mergedPosts = [
+      ...currentState.pendingPosts,
+      ...currentState.posts,
+    ];
+
+    // Enforce memory limit
+    var finalPosts = mergedPosts;
+    if (finalPosts.length > FeedConfig.maxPostsInMemory) {
+      finalPosts = finalPosts.sublist(0, FeedConfig.maxPostsInMemory);
+    }
+
+    // Update oldest timestamp if needed
+    final oldestTimestamp = finalPosts.isNotEmpty
+        ? finalPosts.last.createdAt.millisecondsSinceEpoch ~/ 1000
+        : currentState.oldestTimestamp;
+
+    state = currentState.copyWith(
+      posts: finalPosts,
+      pendingPosts: [],
+      newPostsCount: 0,
+      oldestTimestamp: oldestTimestamp,
+    );
+  }
 
   /// Save NDK events to the database (non-blocking).
   ///
@@ -334,7 +652,9 @@ class FeedNotifier extends StateNotifier<FeedState> {
     // Extract reply and root event IDs from tags
     String? replyToId;
     String? rootEventId;
+    String? replyToAuthorPubkey;
 
+    // First pass: extract event references
     for (final tagJson in event.tags) {
       try {
         final tag = jsonDecode(tagJson) as List;
@@ -358,6 +678,28 @@ class FeedNotifier extends StateNotifier<FeedState> {
       }
     }
 
+    // Second pass: extract author pubkey from p tags
+    for (final tagJson in event.tags) {
+      try {
+        final tag = jsonDecode(tagJson) as List;
+        if (tag.isNotEmpty && tag[0] == 'p') {
+          final pubkey = tag[1] as String;
+          // Check for marker-based p tag (NIP-10 preferred)
+          if (tag.length > 3) {
+            final marker = tag[3] as String?;
+            if (marker == 'reply') {
+              replyToAuthorPubkey = pubkey;
+              break;
+            }
+          }
+          // Fallback: first p tag is likely the reply-to author
+          replyToAuthorPubkey ??= pubkey;
+        }
+      } catch (e) {
+        // Skip invalid tags
+      }
+    }
+
     // Create author (using truncated pubkey as display name for now)
     final author = PostAuthor(
       pubkey: event.pubkey,
@@ -373,6 +715,7 @@ class FeedNotifier extends StateNotifier<FeedState> {
       ),
       replyToId: replyToId,
       rootEventId: rootEventId,
+      replyToAuthorPubkey: replyToAuthorPubkey,
     );
   }
 
@@ -400,8 +743,6 @@ class FeedNotifier extends StateNotifier<FeedState> {
     String? replyToAuthorPubkey,
   }) async {
     try {
-      debugPrint('Publishing reply to: ${rootId.substring(0, 8)}...');
-
       // Create NIP-10 compliant tags
       final tags = _threadService.createReplyTags(
         rootId: rootId,
@@ -417,12 +758,7 @@ class FeedNotifier extends StateNotifier<FeedState> {
         tags: tags,
       );
 
-      if (publishedEvent != null) {
-        debugPrint('Reply published: ${publishedEvent.id}');
-        return true;
-      }
-
-      return false;
+      return publishedEvent != null;
     } catch (e, stackTrace) {
       debugPrint('Error publishing reply: $e\n$stackTrace');
       return false;
@@ -447,7 +783,9 @@ List<Post> _parseEventsIsolate(List<Map<String, dynamic>> rawEvents) {
       // Extract reply and root event IDs from tags
       String? replyToId;
       String? rootEventId;
+      String? replyToAuthorPubkey;
 
+      // First pass: extract event references with markers
       for (final tag in tags) {
         if (tag.isNotEmpty && tag[0] == 'e') {
           if (tag.length > 3) {
@@ -460,6 +798,24 @@ List<Post> _parseEventsIsolate(List<Map<String, dynamic>> rawEvents) {
           } else if (replyToId == null) {
             replyToId = tag[1] as String;
           }
+        }
+      }
+
+      // Second pass: extract author pubkey from p tags
+      // NIP-10: ["p", "<pubkey>", "", "reply"] or just ["p", "<pubkey>"]
+      for (final tag in tags) {
+        if (tag.isNotEmpty && tag[0] == 'p') {
+          final pPubkey = tag[1] as String;
+          // Check for marker-based p tag (NIP-10 preferred)
+          if (tag.length > 3) {
+            final marker = tag[3] as String?;
+            if (marker == 'reply') {
+              replyToAuthorPubkey = pPubkey;
+              break;
+            }
+          }
+          // Fallback: first p tag is likely the reply-to author
+          replyToAuthorPubkey ??= pPubkey;
         }
       }
 
@@ -480,6 +836,7 @@ List<Post> _parseEventsIsolate(List<Map<String, dynamic>> rawEvents) {
         createdAt: DateTime.fromMillisecondsSinceEpoch(createdAt * 1000),
         replyToId: replyToId,
         rootEventId: rootEventId,
+        replyToAuthorPubkey: replyToId != null ? replyToAuthorPubkey : null,
       ));
     } catch (e) {
       // Skip invalid events

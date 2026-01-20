@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -367,7 +366,7 @@ class _ChannelListTile extends StatelessWidget {
     if (channel.picture != null && channel.picture!.isNotEmpty) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: CachedNetworkImage(
+        child: SmartImage(
           imageUrl: channel.picture!,
           width: 48,
           height: 48,

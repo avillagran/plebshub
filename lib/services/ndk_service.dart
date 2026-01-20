@@ -94,8 +94,6 @@ class NdkService {
     _isConnecting = true;
 
     try {
-      debugPrint('Connecting to ${kDefaultRelays.length} relays...');
-
       // Connect to bootstrap relays
       for (final relayUrl in kDefaultRelays) {
         try {
@@ -103,7 +101,6 @@ class NdkService {
             dirtyUrl: relayUrl,
             connectionSource: ConnectionSource.explicit,
           );
-          debugPrint('Connected to relay: $relayUrl');
         } catch (e) {
           debugPrint('Failed to connect to $relayUrl: $e');
           // Continue with other relays
@@ -122,15 +119,7 @@ class NdkService {
         await Future.delayed(const Duration(milliseconds: 100));
       }
 
-      debugPrint('Connected to $connectedCount relays');
       _isConnected = connectedCount >= kMinimumRelayCount;
-
-      if (!_isConnected) {
-        debugPrint(
-          'Warning: Only $connectedCount relays connected (minimum: $kMinimumRelayCount)',
-        );
-      }
-
       return _isConnected;
     } catch (e) {
       debugPrint('Error connecting to relays: $e');
@@ -159,15 +148,6 @@ class NdkService {
     await connectToRelays();
 
     try {
-      debugPrint('Querying with filter: kinds=${filter.kinds}, limit=${filter.limit}');
-      debugPrint('Connected relays for query: ${connectedRelayUrls.length}');
-      debugPrint('NDK connectedRelays count: ${ndk.relays.connectedRelays.length}');
-
-      // Debug: check what types of relays NDK sees
-      for (final relay in ndk.relays.connectedRelays) {
-        debugPrint('Relay: ${relay.url}, type: ${relay.runtimeType}');
-      }
-
       final request = ndk.requests.query(
         filters: [filter],
         explicitRelays: kDefaultRelays,
@@ -179,7 +159,6 @@ class NdkService {
         events.add(event);
       }
 
-      debugPrint('Fetched ${events.length} events');
       return events;
     } catch (e) {
       debugPrint('Error fetching events: $e');
@@ -189,29 +168,46 @@ class NdkService {
 
   /// Stream events from relays using a filter.
   ///
-  /// Returns a stream of [Nip01Event] objects matching the filter criteria.
-  /// This is useful for real-time updates.
+  /// Returns an [NdkResponse] containing the stream and request ID.
+  /// **Important**: The caller is responsible for closing the subscription
+  /// when done by calling `closeSubscription(response.requestId)`.
   ///
   /// Example:
   /// ```dart
-  /// NdkService.instance.streamEvents(
+  /// final response = await NdkService.instance.streamEvents(
   ///   filter: Filter(kinds: [1]),
-  /// ).listen((event) {
+  /// );
+  ///
+  /// final subscription = response.stream.listen((event) {
   ///   print('New event: ${event.id}');
   /// });
+  ///
+  /// // When done:
+  /// subscription.cancel();
+  /// await NdkService.instance.closeSubscription(response.requestId);
   /// ```
-  Stream<Nip01Event> streamEvents({
+  Future<NdkResponse> streamEvents({
     required Filter filter,
-  }) async* {
+  }) async {
     // Ensure relays are connected
     await connectToRelays();
 
-    final request = ndk.requests.subscription(
+    final response = ndk.requests.subscription(
       filters: [filter],
     );
 
-    await for (final event in request.stream) {
-      yield event;
+    return response;
+  }
+
+  /// Close a subscription by its request ID.
+  ///
+  /// This should be called when a subscription is no longer needed to
+  /// prevent "data after EOSE" warnings and memory leaks.
+  Future<void> closeSubscription(String requestId) async {
+    try {
+      await ndk.requests.closeSubscription(requestId);
+    } catch (e) {
+      debugPrint('Error closing subscription $requestId: $e');
     }
   }
 
@@ -282,8 +278,6 @@ class NdkService {
       // Ensure relays are connected
       await connectToRelays();
 
-      debugPrint('Publishing text note...');
-
       // Get public key from private key
       final publicKey = Bip340.getPublicKey(privateKey);
 
@@ -307,7 +301,6 @@ class NdkService {
       // Wait for broadcast to complete
       await broadcastResponse.broadcastDoneFuture;
 
-      debugPrint('Event published successfully: ${event.id}');
       return event;
     } catch (e) {
       debugPrint('Error publishing event: $e');

@@ -5,7 +5,7 @@
 /// with background refresh.
 ///
 /// TTL Strategy:
-/// - Posts: 1 hour (frequent updates expected)
+/// - Posts: 2 hours (frequent updates expected)
 /// - Profiles: 6 hours (metadata changes rarely)
 /// - Channels: 6 hours (similar to profiles)
 /// - Following list: 30 minutes (more dynamic social data)
@@ -19,7 +19,7 @@ class CacheConfig {
   ///
   /// Posts use a stale-while-revalidate pattern where cached content
   /// is shown immediately while fresh content is fetched in background.
-  static const Duration postsTtl = Duration(hours: 1);
+  static const Duration postsTtl = Duration(hours: 2);
 
   /// TTL for cached user profiles (kind:0 metadata).
   ///

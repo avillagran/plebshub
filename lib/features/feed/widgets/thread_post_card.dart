@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -56,7 +55,6 @@ class ThreadPostCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final effectiveDepth = depth > maxIndentDepth ? maxIndentDepth : depth;
-    final leftPadding = effectiveDepth * indentWidth;
 
     return InkWell(
       onTap: onTap,
@@ -127,48 +125,20 @@ class ThreadPostCard extends ConsumerWidget {
     );
   }
 
-  /// Build the post header (avatar, name, time).
+  /// Build the post header using ProfileDisplay.
   Widget _buildHeader(BuildContext context) {
+    final avatarRadius = isMainPost ? 22.0 : 18.0;
+
     return Row(
       children: [
-        GestureDetector(
-          onTap: () => _navigateToProfile(context),
-          child: _buildAvatar(),
-        ),
-        const SizedBox(width: 10),
         Expanded(
-          child: GestureDetector(
+          child: ProfileDisplay(
+            pubkey: post.author.pubkey,
+            avatarRadius: avatarRadius,
+            nameStyle: isMainPost ? AppTypography.titleMedium : AppTypography.labelLarge,
+            fallbackName: post.author.displayName,
+            fallbackPicture: post.author.picture,
             onTap: () => _navigateToProfile(context),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        post.author.displayName,
-                        style: isMainPost
-                            ? AppTypography.titleMedium
-                            : AppTypography.labelLarge,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (post.author.nip05 != null) ...[
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.verified,
-                        size: 14,
-                        color: AppColors.success,
-                      ),
-                    ],
-                  ],
-                ),
-                Text(
-                  _formatPubkey(post.author.pubkey),
-                  style: AppTypography.labelSmall,
-                ),
-              ],
-            ),
           ),
         ),
         Text(
@@ -176,44 +146,6 @@ class ThreadPostCard extends ConsumerWidget {
           style: AppTypography.labelSmall,
         ),
       ],
-    );
-  }
-
-  /// Build the avatar widget.
-  Widget _buildAvatar() {
-    final size = isMainPost ? 44.0 : 36.0;
-
-    if (post.author.picture != null && post.author.picture!.isNotEmpty) {
-      return ClipOval(
-        child: CachedNetworkImage(
-          imageUrl: post.author.picture!,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          placeholder: (context, url) => _buildAvatarPlaceholder(size),
-          errorWidget: (context, url, error) => _buildAvatarPlaceholder(size),
-        ),
-      );
-    }
-    return _buildAvatarPlaceholder(size);
-  }
-
-  Widget _buildAvatarPlaceholder(double size) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: AppColors.surfaceVariant,
-        borderRadius: BorderRadius.circular(size / 2),
-      ),
-      child: Center(
-        child: Text(
-          post.author.displayName.isNotEmpty
-              ? post.author.displayName[0].toUpperCase()
-              : '?',
-          style: isMainPost ? AppTypography.titleMedium : AppTypography.labelLarge,
-        ),
-      ),
     );
   }
 
@@ -295,11 +227,6 @@ class ThreadPostCard extends ConsumerWidget {
     }
   }
 
-  String _formatPubkey(String pubkey) {
-    if (pubkey.length <= 12) return pubkey;
-    return '${pubkey.substring(0, 8)}...${pubkey.substring(pubkey.length - 4)}';
-  }
-
   String _formatTime(DateTime time) {
     final now = DateTime.now();
     final diff = now.difference(time);
@@ -358,9 +285,11 @@ class ParentContextCard extends StatelessWidget {
                 children: [
                   Row(
                     children: [
-                      Text(
-                        post.author.displayName,
-                        style: AppTypography.labelMedium,
+                      ProfileDisplay(
+                        pubkey: post.author.pubkey,
+                        mode: ProfileDisplayMode.nameOnly,
+                        fallbackName: post.author.displayName,
+                        nameStyle: AppTypography.labelMedium,
                       ),
                       const SizedBox(width: 8),
                       Text(

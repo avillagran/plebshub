@@ -43,11 +43,44 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     // Add scroll listener for pagination
     _scrollController.addListener(_onScroll);
 
-    // Load global feed on initialization
+    // Load appropriate feed based on auth state
     Future.microtask(() async {
-      await ref.read(feedProvider.notifier).loadGlobalFeed();
+      await _loadFeedForCurrentUser();
       _fetchReactionsForLoadedPosts();
     });
+  }
+
+  /// Load the appropriate feed based on authentication state.
+  ///
+  /// Uses cache-first strategy for instant display:
+  /// 1. Loads cached posts immediately
+  /// 2. Fetches new posts in background
+  /// 3. Shows "X nuevos" button when new posts arrive
+  Future<void> _loadFeedForCurrentUser() async {
+    final authState = ref.read(authProvider);
+    if (authState is AuthStateAuthenticated) {
+      // Load following feed for authenticated users
+      await ref.read(feedProvider.notifier).loadFollowingFeed(
+            userPubkey: authState.keypair.publicKey,
+          );
+    } else {
+      // Load global feed with cache-first strategy
+      await ref.read(feedProvider.notifier).loadFeedCacheFirst();
+    }
+    if (!mounted) return;
+  }
+
+  /// Show new posts and scroll to top.
+  void _showNewPostsAndScrollToTop() {
+    ref.read(feedProvider.notifier).showNewPosts();
+    // Scroll to top with animation
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+    // Fetch reactions for the newly shown posts
+    _fetchReactionsForLoadedPosts();
   }
 
   @override
@@ -79,6 +112,9 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     final previousCount = feedState.posts.length;
     await ref.read(feedProvider.notifier).loadMore();
 
+    // Check if widget is still mounted after async operation
+    if (!mounted) return;
+
     // Fetch reactions for newly loaded posts
     final newState = ref.read(feedProvider);
     if (newState is FeedStateLoaded && newState.posts.length > previousCount) {
@@ -107,6 +143,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
 
   Future<void> _handleRefresh() async {
     await ref.read(feedProvider.notifier).refresh();
+    if (!mounted) return;
     _fetchReactionsForLoadedPosts();
   }
 
@@ -137,11 +174,22 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
 
     // Listen to auth state changes and reload feed
     ref.listen<AuthState>(authProvider, (previous, next) {
-      // When user logs in or logs out, reload the feed
+      // When user logs in or logs out, reload the appropriate feed
       if ((previous is! AuthStateAuthenticated && next is AuthStateAuthenticated) ||
           (previous is AuthStateAuthenticated && next is! AuthStateAuthenticated)) {
         Future.microtask(() async {
-          await ref.read(feedProvider.notifier).loadGlobalFeed();
+          if (!mounted) return;
+          if (next is AuthStateAuthenticated) {
+            // User logged in - load following feed
+            await ref.read(feedProvider.notifier).loadFollowingFeed(
+                  userPubkey: next.keypair.publicKey,
+                );
+          } else {
+            // User logged out - clear user and load global feed
+            ref.read(feedProvider.notifier).clearCurrentUser();
+            await ref.read(feedProvider.notifier).loadGlobalFeed();
+          }
+          if (!mounted) return;
           _fetchReactionsForLoadedPosts();
         });
       }
@@ -184,9 +232,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
               ),
               const SizedBox(height: 24),
               ElevatedButton.icon(
-                onPressed: () {
-                  ref.read(feedProvider.notifier).loadGlobalFeed();
-                },
+                onPressed: _loadFeedForCurrentUser,
                 icon: const Icon(Icons.refresh),
                 label: const Text('Retry'),
               ),
@@ -197,6 +243,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
         :final posts,
         :final isLoadingMore,
         :final hasMore,
+        :final newPostsCount,
       ) =>
         RefreshIndicator(
           onRefresh: _handleRefresh,
@@ -221,23 +268,33 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
                   controller: _scrollController,
                   // No padding - PostCard handles its own padding
                   padding: EdgeInsets.zero,
-                  // Add 1 for loading indicator when loading more
-                  itemCount: posts.length + (isLoadingMore ? 1 : (hasMore ? 1 : 0)),
+                  // Add 1 for new posts button + 1 for loading indicator when loading more
+                  itemCount: posts.length +
+                      (newPostsCount > 0 ? 1 : 0) +
+                      (isLoadingMore ? 1 : (hasMore ? 1 : 0)),
                   itemBuilder: (context, index) {
+                    // Show "X nuevos" button at the top when there are new posts
+                    if (newPostsCount > 0 && index == 0) {
+                      return _buildNewPostsButton(newPostsCount);
+                    }
+
+                    // Adjust index if we showed the new posts button
+                    final postIndex = newPostsCount > 0 ? index - 1 : index;
+
                     // Show loading indicator at the bottom
-                    if (index >= posts.length) {
+                    if (postIndex >= posts.length) {
                       return _buildLoadMoreIndicator(isLoadingMore, hasMore);
                     }
 
                     // Precache images for nearby posts
-                    _precacheNearbyImages(context, index, posts);
+                    _precacheNearbyImages(context, postIndex, posts);
 
-                    final post = posts[index];
+                    final post = posts[postIndex];
                     // PostCard directly, no wrapper - seamless X/Twitter style
                     return PostCard(
                       post: post,
                       // Hide divider on last item before load indicator
-                      showDivider: index < posts.length - 1 || isLoadingMore || hasMore,
+                      showDivider: postIndex < posts.length - 1 || isLoadingMore || hasMore,
                     );
                   },
                 ),
@@ -269,6 +326,34 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
           'No more posts',
           style: AppTypography.bodyMedium.copyWith(
             color: AppColors.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Build the "X nuevos" button shown when new posts are available.
+  Widget _buildNewPostsButton(int count) {
+    return GestureDetector(
+      onTap: _showNewPostsAndScrollToTop,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.primary.withValues(alpha: 0.1),
+          border: Border(
+            bottom: BorderSide(
+              color: AppColors.border,
+            ),
+          ),
+        ),
+        child: Center(
+          child: Text(
+            '$count nuevos',
+            style: AppTypography.labelLarge.copyWith(
+              color: AppColors.primary,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ),

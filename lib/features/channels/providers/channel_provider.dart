@@ -422,7 +422,8 @@ class ChannelChatNotifier extends StateNotifier<ChannelChatState> {
   @override
   void dispose() {
     _messageSubscription?.cancel();
-    _channelService.unsubscribeFromChannel(_channelId);
+    // Use unawaited to ensure cleanup happens without blocking dispose
+    unawaited(_channelService.unsubscribeFromChannel(_channelId));
     super.dispose();
   }
 }

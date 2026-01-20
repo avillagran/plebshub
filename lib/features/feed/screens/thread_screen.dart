@@ -109,35 +109,73 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                     .refresh(),
                 child: CustomScrollView(
                   slivers: [
-                    // Parent context (if exists)
+                    // Parent context header (if exists)
                     if (parentChain.isNotEmpty)
                       SliverToBoxAdapter(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.only(
-                                left: 16,
-                                top: 12,
-                                bottom: 4,
+                        child: Padding(
+                          padding: const EdgeInsets.only(
+                            left: 16,
+                            top: 12,
+                            bottom: 8,
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.subdirectory_arrow_right,
+                                size: 16,
+                                color: AppColors.textSecondary,
                               ),
-                              child: Text(
-                                'In reply to',
+                              const SizedBox(width: 8),
+                              Text(
+                                'Parent post',
                                 style: AppTypography.labelSmall.copyWith(
                                   color: AppColors.textSecondary,
                                 ),
                               ),
-                            ),
-                            ...parentChain.map(
-                              (post) => ParentContextCard(
-                                post: post,
-                                onTap: () => context.push(
-                                  '/thread/${post.id}',
-                                  extra: post,
+                            ],
+                          ),
+                        ),
+                      ),
+                    // Parent posts - show full content inline
+                    if (parentChain.isNotEmpty)
+                      SliverList(
+                        delegate: SliverChildBuilderDelegate(
+                          (context, index) {
+                            final post = parentChain[index];
+                            return Column(
+                              children: [
+                                ThreadPostCard(
+                                  post: post,
+                                  showConnectorBelow: true,
+                                  onTap: () => context.push(
+                                    '/thread/${post.id}',
+                                    extra: post,
+                                  ),
+                                  onReplyTap: () {
+                                    setState(() {
+                                      _replyingToId = post.id;
+                                      _replyingToAuthorPubkey = post.author.pubkey;
+                                      _replyingToDisplayName = post.author.displayName;
+                                    });
+                                  },
                                 ),
-                              ),
-                            ),
-                          ],
+                                if (index < parentChain.length - 1)
+                                  Divider(
+                                    height: 1,
+                                    color: AppColors.border.withOpacity(0.5),
+                                  ),
+                              ],
+                            );
+                          },
+                          childCount: parentChain.length,
+                        ),
+                      ),
+                    // Divider between parent and main post
+                    if (parentChain.isNotEmpty)
+                      SliverToBoxAdapter(
+                        child: Divider(
+                          height: 1,
+                          color: AppColors.border,
                         ),
                       ),
                     // Main post

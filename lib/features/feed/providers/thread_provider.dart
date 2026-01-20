@@ -450,6 +450,9 @@ class ThreadNotifierWithPost extends StateNotifier<ThreadState> {
       // Fetch profiles in batch
       await _profileService.fetchProfiles(pubkeys.toList());
 
+      // Convert root event to Post with fresh profile data
+      final rootPost = _convertEventToPost(result.root.event);
+
       // Convert parent chain
       final parentChain = result.parentChain
           .map((e) => _convertEventToPost(e))
@@ -461,10 +464,11 @@ class ThreadNotifierWithPost extends StateNotifier<ThreadState> {
       // Flatten replies for easy display
       final flattenedReplies = _flattenReplies(replies, maxDepth: 3);
 
-      // Update state with replies
+      // Update state with replies and updated root post
       final currentState = state;
       if (currentState is ThreadStateLoaded) {
         state = currentState.copyWith(
+          rootPost: rootPost,
           parentChain: parentChain,
           replies: replies,
           flattenedReplies: flattenedReplies,

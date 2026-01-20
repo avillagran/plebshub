@@ -54,6 +54,9 @@ class Post with _$Post {
     /// Root event ID (for threading)
     String? rootEventId,
 
+    /// Author pubkey of the post being replied to (for "Replying to @username")
+    String? replyToAuthorPubkey,
+
     /// Number of replies to this post
     @Default(0) int replyCount,
   }) = _Post;

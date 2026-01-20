@@ -13,6 +13,8 @@ export 'widgets/adaptive_scaffold.dart';
 export 'widgets/column_layout.dart';
 export 'widgets/link_preview_card.dart';
 export 'widgets/nostr_content.dart';
+export 'widgets/profile_display.dart';
+export 'widgets/smart_image.dart';
 
 // Providers
 export 'providers/link_preview_provider.dart';

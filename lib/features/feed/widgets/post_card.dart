@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +5,7 @@ import 'package:plebshub_ui/plebshub_ui.dart';
 import 'package:zap_widgets/zap_widgets.dart';
 
 import '../../../shared/shared.dart';
+import '../../profile/providers/profile_cache_provider.dart';
 import '../models/post.dart';
 import '../providers/reply_count_provider.dart';
 import 'like_button.dart';
@@ -51,10 +51,14 @@ class PostCard extends ConsumerWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Left column: Avatar
-                  GestureDetector(
+                  // Left column: Avatar using ProfileDisplay
+                  ProfileDisplay(
+                    pubkey: post.author.pubkey,
+                    mode: ProfileDisplayMode.avatarOnly,
+                    avatarRadius: 20,
                     onTap: () => _navigateToProfile(context, post.author.pubkey),
-                    child: _buildAvatar(),
+                    fallbackName: post.author.displayName,
+                    fallbackPicture: post.author.picture,
                   ),
                   const SizedBox(width: 12),
                   // Right column: Header, content, actions
@@ -64,26 +68,7 @@ class PostCard extends ConsumerWidget {
                       children: [
                         // Reply indicator (if this is a reply)
                         if (showReplyIndicator && post.replyToId != null)
-                          Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.reply,
-                                  size: 12,
-                                  color: AppColors.textSecondary,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Replying to a post',
-                                  style: AppTypography.labelSmall.copyWith(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
+                          _buildReplyIndicator(context),
                         // Header: Name, username, time in one line
                         _buildHeader(context),
                         const SizedBox(height: 4),
@@ -122,32 +107,68 @@ class PostCard extends ConsumerWidget {
     );
   }
 
+  /// Build the reply indicator showing "Replying to @username".
+  Widget _buildReplyIndicator(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Icon(
+            Icons.reply,
+            size: 12,
+            color: AppColors.textSecondary,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'Replying to ',
+            style: AppTypography.labelSmall.copyWith(
+              color: AppColors.textSecondary,
+              fontSize: 12,
+            ),
+          ),
+          if (post.replyToAuthorPubkey != null)
+            Flexible(
+              child: GestureDetector(
+                onTap: () => _navigateToProfile(context, post.replyToAuthorPubkey!),
+                child: ProfileDisplay(
+                  pubkey: post.replyToAuthorPubkey!,
+                  mode: ProfileDisplayMode.nameOnly,
+                  nameStyle: AppTypography.labelSmall.copyWith(
+                    color: AppColors.primary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+            )
+          else
+            Text(
+              'a post',
+              style: AppTypography.labelSmall.copyWith(
+                color: AppColors.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   /// Build the header row: Name @username · time
+  /// Uses ProfileDisplay in compact inline mode for the author name.
   Widget _buildHeader(BuildContext context) {
     return GestureDetector(
       onTap: () => _navigateToProfile(context, post.author.pubkey),
       child: Row(
         children: [
-          // Display name
+          // Display name with verification using ProfileDisplay
           Flexible(
-            child: Text(
-              post.author.displayName,
-              style: AppTypography.titleMedium.copyWith(
-                fontWeight: FontWeight.w600,
-                fontSize: 15,
-              ),
-              overflow: TextOverflow.ellipsis,
+            child: _PostCardHeaderName(
+              pubkey: post.author.pubkey,
+              fallbackName: post.author.displayName,
+              fallbackNip05: post.author.nip05,
             ),
           ),
-          // Verification badge
-          if (post.author.nip05 != null) ...[
-            const SizedBox(width: 4),
-            Icon(
-              Icons.verified,
-              size: 14,
-              color: AppColors.success,
-            ),
-          ],
           const SizedBox(width: 4),
           // Username (pubkey)
           Flexible(
@@ -213,43 +234,6 @@ class PostCard extends ConsumerWidget {
           eventId: post.id,
         ),
       ],
-    );
-  }
-
-  /// Build the avatar widget with profile picture support.
-  Widget _buildAvatar() {
-    if (post.author.picture != null && post.author.picture!.isNotEmpty) {
-      return ClipOval(
-        child: CachedNetworkImage(
-          imageUrl: post.author.picture!,
-          width: 40,
-          height: 40,
-          fit: BoxFit.cover,
-          placeholder: (context, url) => _buildAvatarPlaceholder(),
-          errorWidget: (context, url, error) => _buildAvatarPlaceholder(),
-        ),
-      );
-    }
-    return _buildAvatarPlaceholder();
-  }
-
-  /// Build avatar placeholder with initial letter.
-  Widget _buildAvatarPlaceholder() {
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        color: AppColors.surfaceVariant,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Center(
-        child: Text(
-          post.author.displayName.isNotEmpty
-              ? post.author.displayName[0].toUpperCase()
-              : '?',
-          style: AppTypography.titleLarge.copyWith(fontSize: 16),
-        ),
-      ),
     );
   }
 
@@ -381,5 +365,58 @@ class _CompactActionButton extends StatelessWidget {
       final m = count / 1000000;
       return '${m.toStringAsFixed(m < 10 ? 1 : 0)}M';
     }
+  }
+}
+
+/// A consumer widget that displays the author's name and verification badge.
+/// This is extracted to a separate widget to handle profile fetching independently.
+class _PostCardHeaderName extends ConsumerWidget {
+  const _PostCardHeaderName({
+    required this.pubkey,
+    this.fallbackName,
+    this.fallbackNip05,
+  });
+
+  final String pubkey;
+  final String? fallbackName;
+  final String? fallbackNip05;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Watch the profile from cache - this triggers a background fetch if not cached
+    final profile = ref.watch(watchProfileProvider(pubkey));
+
+    // Use profile data if available, otherwise fall back to provided fallbacks
+    final displayName = profile?.nameForDisplay ?? fallbackName ?? _formatPubkey(pubkey);
+    final nip05 = profile?.nip05 ?? fallbackNip05;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(
+            displayName,
+            style: AppTypography.titleMedium.copyWith(
+              fontWeight: FontWeight.w600,
+              fontSize: 15,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (nip05 != null && nip05.isNotEmpty) ...[
+          const SizedBox(width: 4),
+          Icon(
+            Icons.verified,
+            size: 14,
+            color: AppColors.success,
+          ),
+        ],
+      ],
+    );
+  }
+
+  String _formatPubkey(String pubkey) {
+    if (pubkey.length <= 12) return pubkey;
+    return '${pubkey.substring(0, 8)}...${pubkey.substring(pubkey.length - 4)}';
   }
 }

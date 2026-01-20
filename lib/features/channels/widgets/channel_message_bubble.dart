@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -172,7 +171,7 @@ class ChannelMessageBubble extends ConsumerWidget {
   Widget _buildAvatar(String? pictureUrl, String displayName) {
     if (pictureUrl != null && pictureUrl.isNotEmpty) {
       return ClipOval(
-        child: CachedNetworkImage(
+        child: SmartImage(
           imageUrl: pictureUrl,
           width: 36,
           height: 36,

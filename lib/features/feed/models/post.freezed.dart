@@ -47,6 +47,9 @@ mixin _$Post {
   /// Root event ID (for threading)
   String? get rootEventId => throw _privateConstructorUsedError;
 
+  /// Author pubkey of the post being replied to (for "Replying to @username")
+  String? get replyToAuthorPubkey => throw _privateConstructorUsedError;
+
   /// Number of replies to this post
   int get replyCount => throw _privateConstructorUsedError;
 
@@ -70,6 +73,7 @@ abstract class $PostCopyWith<$Res> {
       int zapsCount,
       String? replyToId,
       String? rootEventId,
+      String? replyToAuthorPubkey,
       int replyCount});
 
   $PostAuthorCopyWith<$Res> get author;
@@ -97,6 +101,7 @@ class _$PostCopyWithImpl<$Res, $Val extends Post>
     Object? zapsCount = null,
     Object? replyToId = freezed,
     Object? rootEventId = freezed,
+    Object? replyToAuthorPubkey = freezed,
     Object? replyCount = null,
   }) {
     return _then(_value.copyWith(
@@ -136,6 +141,10 @@ class _$PostCopyWithImpl<$Res, $Val extends Post>
           ? _value.rootEventId
           : rootEventId // ignore: cast_nullable_to_non_nullable
               as String?,
+      replyToAuthorPubkey: freezed == replyToAuthorPubkey
+          ? _value.replyToAuthorPubkey
+          : replyToAuthorPubkey // ignore: cast_nullable_to_non_nullable
+              as String?,
       replyCount: null == replyCount
           ? _value.replyCount
           : replyCount // ignore: cast_nullable_to_non_nullable
@@ -169,6 +178,7 @@ abstract class _$$PostImplCopyWith<$Res> implements $PostCopyWith<$Res> {
       int zapsCount,
       String? replyToId,
       String? rootEventId,
+      String? replyToAuthorPubkey,
       int replyCount});
 
   @override
@@ -194,6 +204,7 @@ class __$$PostImplCopyWithImpl<$Res>
     Object? zapsCount = null,
     Object? replyToId = freezed,
     Object? rootEventId = freezed,
+    Object? replyToAuthorPubkey = freezed,
     Object? replyCount = null,
   }) {
     return _then(_$PostImpl(
@@ -233,6 +244,10 @@ class __$$PostImplCopyWithImpl<$Res>
           ? _value.rootEventId
           : rootEventId // ignore: cast_nullable_to_non_nullable
               as String?,
+      replyToAuthorPubkey: freezed == replyToAuthorPubkey
+          ? _value.replyToAuthorPubkey
+          : replyToAuthorPubkey // ignore: cast_nullable_to_non_nullable
+              as String?,
       replyCount: null == replyCount
           ? _value.replyCount
           : replyCount // ignore: cast_nullable_to_non_nullable
@@ -254,6 +269,7 @@ class _$PostImpl implements _Post {
       this.zapsCount = 0,
       this.replyToId,
       this.rootEventId,
+      this.replyToAuthorPubkey,
       this.replyCount = 0});
 
   factory _$PostImpl.fromJson(Map<String, dynamic> json) =>
@@ -298,6 +314,10 @@ class _$PostImpl implements _Post {
   @override
   final String? rootEventId;
 
+  /// Author pubkey of the post being replied to (for "Replying to @username")
+  @override
+  final String? replyToAuthorPubkey;
+
   /// Number of replies to this post
   @override
   @JsonKey()
@@ -305,7 +325,7 @@ class _$PostImpl implements _Post {
 
   @override
   String toString() {
-    return 'Post(id: $id, author: $author, content: $content, createdAt: $createdAt, reactionsCount: $reactionsCount, repostsCount: $repostsCount, zapsCount: $zapsCount, replyToId: $replyToId, rootEventId: $rootEventId, replyCount: $replyCount)';
+    return 'Post(id: $id, author: $author, content: $content, createdAt: $createdAt, reactionsCount: $reactionsCount, repostsCount: $repostsCount, zapsCount: $zapsCount, replyToId: $replyToId, rootEventId: $rootEventId, replyToAuthorPubkey: $replyToAuthorPubkey, replyCount: $replyCount)';
   }
 
   @override
@@ -328,6 +348,8 @@ class _$PostImpl implements _Post {
                 other.replyToId == replyToId) &&
             (identical(other.rootEventId, rootEventId) ||
                 other.rootEventId == rootEventId) &&
+            (identical(other.replyToAuthorPubkey, replyToAuthorPubkey) ||
+                other.replyToAuthorPubkey == replyToAuthorPubkey) &&
             (identical(other.replyCount, replyCount) ||
                 other.replyCount == replyCount));
   }
@@ -345,6 +367,7 @@ class _$PostImpl implements _Post {
       zapsCount,
       replyToId,
       rootEventId,
+      replyToAuthorPubkey,
       replyCount);
 
   @JsonKey(ignore: true)
@@ -372,6 +395,7 @@ abstract class _Post implements Post {
       final int zapsCount,
       final String? replyToId,
       final String? rootEventId,
+      final String? replyToAuthorPubkey,
       final int replyCount}) = _$PostImpl;
 
   factory _Post.fromJson(Map<String, dynamic> json) = _$PostImpl.fromJson;
@@ -412,6 +436,10 @@ abstract class _Post implements Post {
 
   /// Root event ID (for threading)
   String? get rootEventId;
+  @override
+
+  /// Author pubkey of the post being replied to (for "Replying to @username")
+  String? get replyToAuthorPubkey;
   @override
 
   /// Number of replies to this post

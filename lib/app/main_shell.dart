@@ -6,6 +6,7 @@ import 'package:plebshub_ui/plebshub_ui.dart';
 import '../shared/shared.dart';
 import '../features/auth/providers/auth_provider.dart';
 import '../features/auth/providers/auth_state.dart';
+import '../features/columns/columns.dart';
 
 /// Provider for the current navigation index.
 final navigationIndexProvider = StateProvider<int>((ref) => 0);
@@ -126,15 +127,18 @@ class MainShell extends ConsumerWidget {
               child: const Icon(Icons.edit),
             )
           : null,
-      body: Responsive.isMobile(context)
-          ? child
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildBreadcrumbHeader(context, selectedIndex),
-                Expanded(child: child),
-              ],
-            ),
+      body: Responsive.isDesktop(context)
+          ? const MultiColumnLayout() // Desktop: multi-column TweetDeck-style layout
+          : Responsive.isMobile(context)
+              ? child // Mobile: single column with bottom nav
+              : Column(
+                  // Tablet: breadcrumb header with single column content
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildBreadcrumbHeader(context, selectedIndex),
+                    Expanded(child: child),
+                  ],
+                ),
     );
   }
 
@@ -147,7 +151,7 @@ class MainShell extends ConsumerWidget {
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(
-            color: Theme.of(context).dividerColor,
+            color: AppColors.border,
             width: 1,
           ),
         ),

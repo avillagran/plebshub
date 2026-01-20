@@ -54,6 +54,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     // Load global explore feed on initialization
     Future.microtask(() async {
       await ref.read(exploreFeedProvider.notifier).loadGlobalFeed();
+      if (!mounted) return;
       _fetchReactionsForLoadedPosts();
     });
   }
@@ -87,6 +88,9 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     final previousCount = feedState.posts.length;
     await ref.read(exploreFeedProvider.notifier).loadMore();
 
+    // Check if widget is still mounted after async operation
+    if (!mounted) return;
+
     // Fetch reactions for newly loaded posts
     final newState = ref.read(exploreFeedProvider);
     if (newState is ExploreFeedStateLoaded &&
@@ -116,6 +120,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
 
   Future<void> _handleRefresh() async {
     await ref.read(exploreFeedProvider.notifier).refresh();
+    if (!mounted) return;
     _fetchReactionsForLoadedPosts();
   }
 

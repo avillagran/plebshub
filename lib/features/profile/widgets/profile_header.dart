@@ -1,4 +1,3 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:plebshub_ui/plebshub_ui.dart';
 
@@ -212,7 +211,7 @@ class ProfileHeader extends StatelessWidget {
 
   Widget _buildBanner() {
     if (profile.banner != null && profile.banner!.isNotEmpty) {
-      return CachedNetworkImage(
+      return SmartImage(
         imageUrl: profile.banner!,
         height: _bannerHeight,
         width: double.infinity,
@@ -254,7 +253,7 @@ class ProfileHeader extends StatelessWidget {
       ),
       child: ClipOval(
         child: profile.picture != null && profile.picture!.isNotEmpty
-            ? CachedNetworkImage(
+            ? SmartImage(
                 imageUrl: profile.picture!,
                 width: _avatarSize,
                 height: _avatarSize,
@@ -451,7 +450,7 @@ class ProfileHeaderCompact extends StatelessWidget {
             // Avatar
             ClipOval(
               child: profile.picture != null && profile.picture!.isNotEmpty
-                  ? CachedNetworkImage(
+                  ? SmartImage(
                       imageUrl: profile.picture!,
                       width: 48,
                       height: 48,

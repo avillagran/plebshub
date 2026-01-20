@@ -59,8 +59,11 @@ class ChannelService {
   final _ndkService = NdkService.instance;
   final _cacheService = CacheService.instance;
 
-  /// Active subscriptions for channel messages.
+  /// Active stream subscriptions for channel messages.
   final Map<String, StreamSubscription<Nip01Event>> _subscriptions = {};
+
+  /// Active NDK subscription request IDs for channel messages.
+  final Map<String, String> _ndkRequestIds = {};
 
   /// Stream controllers for channel messages.
   final Map<String, StreamController<ChannelMessage>> _messageControllers = {};
@@ -606,11 +609,14 @@ class ChannelService {
         since: DateTime.now().millisecondsSinceEpoch ~/ 1000,
       );
 
-      // Stream events from relays
-      final eventStream = _ndkService.streamEvents(filter: filter);
+      // Stream events from relays - get the NdkResponse with request ID
+      final response = await _ndkService.streamEvents(filter: filter);
+
+      // Store the NDK request ID for cleanup
+      _ndkRequestIds[channelId] = response.requestId;
 
       // Subscribe and forward to controller
-      final subscription = eventStream.listen(
+      final subscription = response.stream.listen(
         (event) {
           final message = ChannelMessage.fromEvent(
             eventId: event.id,
@@ -640,12 +646,19 @@ class ChannelService {
   /// Unsubscribe from a channel's messages.
   ///
   /// [channelId] - The channel ID to unsubscribe from.
-  void unsubscribeFromChannel(String channelId) {
+  Future<void> unsubscribeFromChannel(String channelId) async {
     // debugPrint('Unsubscribing from channel: ${channelId.substring(0, 8)}...');
 
-    // Cancel subscription
-    _subscriptions[channelId]?.cancel();
+    // Cancel the stream subscription
+    await _subscriptions[channelId]?.cancel();
     _subscriptions.remove(channelId);
+
+    // Close the NDK subscription to prevent "data after EOSE" warnings
+    final requestId = _ndkRequestIds[channelId];
+    if (requestId != null) {
+      await _ndkService.closeSubscription(requestId);
+      _ndkRequestIds.remove(channelId);
+    }
 
     // Close stream controller
     _messageControllers[channelId]?.close();
@@ -653,14 +666,22 @@ class ChannelService {
   }
 
   /// Unsubscribe from all channels.
-  void unsubscribeAll() {
+  Future<void> unsubscribeAll() async {
     // debugPrint('Unsubscribing from all channels');
 
+    // Cancel all stream subscriptions
     for (final subscription in _subscriptions.values) {
-      subscription.cancel();
+      await subscription.cancel();
     }
     _subscriptions.clear();
 
+    // Close all NDK subscriptions to prevent "data after EOSE" warnings
+    for (final requestId in _ndkRequestIds.values) {
+      await _ndkService.closeSubscription(requestId);
+    }
+    _ndkRequestIds.clear();
+
+    // Close all stream controllers
     for (final controller in _messageControllers.values) {
       controller.close();
     }
@@ -675,7 +696,7 @@ class ChannelService {
   }
 
   /// Dispose of all resources.
-  void dispose() {
-    unsubscribeAll();
+  Future<void> dispose() async {
+    await unsubscribeAll();
   }
 }
