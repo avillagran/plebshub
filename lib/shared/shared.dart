@@ -6,6 +6,13 @@ library shared;
 
 // Utils
 export 'utils/nostr_content_parser.dart';
+export 'utils/responsive.dart';
 
 // Widgets
+export 'widgets/adaptive_scaffold.dart';
+export 'widgets/column_layout.dart';
+export 'widgets/link_preview_card.dart';
 export 'widgets/nostr_content.dart';
+
+// Providers
+export 'providers/link_preview_provider.dart';

@@ -1,82 +1,75 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ndk/ndk.dart';
 
+import '../../../core/constants/cache_config.dart';
+import '../../../services/cache/cache_service.dart';
 import '../../../services/database_service.dart';
 import '../../../services/ndk_service.dart';
-import '../../../services/thread_service.dart';
+import '../../../services/profile_service.dart';
+import '../../profile/models/profile.dart';
 import '../models/nostr_event.dart';
 import '../models/post.dart';
+import 'feed_provider.dart';
 
-/// Provider for the FeedNotifier.
+/// Provider for the ExploreFeedNotifier.
 ///
-/// This provider manages the global feed state and provides methods for:
-/// - Loading the global feed (recent kind:1 notes)
+/// This provider manages the global explore feed state (all public posts)
+/// and provides methods for:
+/// - Loading the global feed (recent kind:1 notes from anyone)
 /// - Refreshing the feed
 /// - Converting NDK events to Post models
 /// - Caching events in Isar database
 /// - Pagination with lazy loading
 /// - Memory management with history limits
+/// - Smart caching with stale-while-revalidate pattern
 ///
 /// Example:
 /// ```dart
 /// // In a widget
-/// final feedState = ref.watch(feedProvider);
+/// final feedState = ref.watch(exploreFeedProvider);
 ///
-/// // Load feed
-/// ref.read(feedProvider.notifier).loadGlobalFeed();
+/// // Load global feed
+/// ref.read(exploreFeedProvider.notifier).loadGlobalFeed();
 ///
 /// // Load more posts (pagination)
-/// ref.read(feedProvider.notifier).loadMore();
+/// ref.read(exploreFeedProvider.notifier).loadMore();
 ///
 /// // Refresh feed
-/// ref.read(feedProvider.notifier).refresh();
+/// ref.read(exploreFeedProvider.notifier).refresh();
 /// ```
-final feedProvider = StateNotifierProvider<FeedNotifier, FeedState>((ref) {
-  return FeedNotifier();
+final exploreFeedProvider =
+    StateNotifierProvider<ExploreFeedNotifier, ExploreFeedState>((ref) {
+  return ExploreFeedNotifier();
 });
 
-/// Configuration constants for feed pagination and memory management.
-class FeedConfig {
-  /// Initial number of posts to load.
-  static const int initialLoadLimit = 50;
-
-  /// Number of posts to load per pagination batch.
-  static const int paginationBatchSize = 30;
-
-  /// Maximum number of posts to keep in memory.
-  /// Oldest posts are discarded when this limit is exceeded.
-  static const int maxPostsInMemory = 500;
-
-  /// Initial time window for fetching posts (24 hours in seconds).
-  static const int initialTimeWindowSeconds = 24 * 60 * 60;
-}
-
-/// State for the feed.
+/// State for the explore feed.
 @immutable
-sealed class FeedState {
-  const FeedState();
+sealed class ExploreFeedState {
+  const ExploreFeedState();
 }
 
 /// Initial state - no data loaded yet
-class FeedStateInitial extends FeedState {
-  const FeedStateInitial();
+class ExploreFeedStateInitial extends ExploreFeedState {
+  const ExploreFeedStateInitial();
 }
 
 /// Loading state - fetching data from relays
-class FeedStateLoading extends FeedState {
-  const FeedStateLoading();
+class ExploreFeedStateLoading extends ExploreFeedState {
+  const ExploreFeedStateLoading();
 }
 
 /// Loaded state - feed data available
-class FeedStateLoaded extends FeedState {
-  const FeedStateLoaded({
+class ExploreFeedStateLoaded extends ExploreFeedState {
+  const ExploreFeedStateLoaded({
     required this.posts,
     this.isLoadingMore = false,
     this.hasMore = true,
     this.oldestTimestamp,
+    this.isRefreshingInBackground = false,
   });
 
   final List<Post> posts;
@@ -90,54 +83,79 @@ class FeedStateLoaded extends FeedState {
   /// Timestamp of the oldest post for pagination cursor.
   final int? oldestTimestamp;
 
+  /// Whether the feed is being refreshed in background (stale-while-revalidate).
+  final bool isRefreshingInBackground;
+
   /// Create a copy with updated fields.
-  FeedStateLoaded copyWith({
+  ExploreFeedStateLoaded copyWith({
     List<Post>? posts,
     bool? isLoadingMore,
     bool? hasMore,
     int? oldestTimestamp,
+    bool? isRefreshingInBackground,
   }) {
-    return FeedStateLoaded(
+    return ExploreFeedStateLoaded(
       posts: posts ?? this.posts,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       hasMore: hasMore ?? this.hasMore,
       oldestTimestamp: oldestTimestamp ?? this.oldestTimestamp,
+      isRefreshingInBackground:
+          isRefreshingInBackground ?? this.isRefreshingInBackground,
     );
   }
 }
 
 /// Error state - something went wrong
-class FeedStateError extends FeedState {
-  const FeedStateError({required this.message});
+class ExploreFeedStateError extends ExploreFeedState {
+  const ExploreFeedStateError({required this.message});
 
   final String message;
 }
 
-/// Notifier for managing feed state.
-class FeedNotifier extends StateNotifier<FeedState> {
-  FeedNotifier() : super(const FeedStateInitial());
+/// Notifier for managing explore feed state.
+class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
+  ExploreFeedNotifier() : super(const ExploreFeedStateInitial());
 
   final _ndkService = NdkService.instance;
   final _dbService = DatabaseService.instance;
-  final _threadService = ThreadService.instance;
+  final _cacheService = CacheService.instance;
+  final _profileService = ProfileService.instance;
 
-  /// Load the global feed (recent kind:1 notes).
+  /// Cache key for the global explore feed.
+  static const String _feedCacheKey = '${CacheConfig.feedKeyPrefix}explore';
+
+  /// Load the global feed with stale-while-revalidate pattern.
   ///
-  /// Fetches posts from the last 24 hours, up to [FeedConfig.initialLoadLimit].
-  /// This is optimized for initial load - use [loadMore] for pagination.
+  /// 1. Immediately shows cached posts if available
+  /// 2. Fetches fresh posts in background
+  /// 3. Merges new posts with cached (deduplicates by id)
   Future<void> loadGlobalFeed() async {
-    state = const FeedStateLoading();
+    // Step 1: Try to show cached data immediately
+    final hasCached = await _loadFromCache();
 
+    if (!hasCached) {
+      // No cache, show loading state
+      state = const ExploreFeedStateLoading();
+    }
+
+    // Step 2: Fetch fresh data (in background if we have cache)
     try {
       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final since = now - FeedConfig.initialTimeWindowSeconds;
 
-      debugPrint(
-        'Loading global feed (limit: ${FeedConfig.initialLoadLimit}, '
-        'since: ${DateTime.fromMillisecondsSinceEpoch(since * 1000)})...',
-      );
+      // debugPrint(
+      //   'Loading explore feed (limit: ${FeedConfig.initialLoadLimit}, '
+      //   'since: ${DateTime.fromMillisecondsSinceEpoch(since * 1000)})...',
+      // );
 
-      // Create filter for kind:1 (text notes) with time window
+      // Mark as refreshing in background if we have cached data
+      if (state is ExploreFeedStateLoaded) {
+        state = (state as ExploreFeedStateLoaded).copyWith(
+          isRefreshingInBackground: true,
+        );
+      }
+
+      // Create filter for kind:1 (text notes) with time window - no author filter
       final filter = Filter(
         kinds: [1], // kind:1 = text notes
         since: since,
@@ -147,38 +165,155 @@ class FeedNotifier extends StateNotifier<FeedState> {
       // Fetch events from relays
       final ndkEvents = await _ndkService.fetchEvents(filter: filter);
 
-      if (ndkEvents.isEmpty) {
-        debugPrint('No events found in global feed');
-        state = const FeedStateLoaded(
+      if (ndkEvents.isEmpty && state is! ExploreFeedStateLoaded) {
+        // debugPrint('No events found in explore feed');
+        state = const ExploreFeedStateLoaded(
           posts: [],
-          hasMore: true, // Still might have older posts
+          hasMore: true,
         );
         return;
       }
 
       // Parse events in isolate and save to DB (non-blocking)
-      final posts = await _saveEventsToDatabase(ndkEvents);
+      final freshPosts = await _saveEventsToDatabase(ndkEvents);
+
+      // Get current posts (from cache or empty)
+      final currentPosts = state is ExploreFeedStateLoaded
+          ? (state as ExploreFeedStateLoaded).posts
+          : <Post>[];
+
+      // Merge and deduplicate
+      final mergedPosts = _mergeAndDeduplicate(currentPosts, freshPosts);
 
       // Sort by creation time (newest first)
-      posts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      mergedPosts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
       // Calculate oldest timestamp for pagination
-      final oldestTimestamp = posts.isNotEmpty
-          ? posts.last.createdAt.millisecondsSinceEpoch ~/ 1000
+      final oldestTimestamp = mergedPosts.isNotEmpty
+          ? mergedPosts.last.createdAt.millisecondsSinceEpoch ~/ 1000
           : null;
 
-      debugPrint('Loaded ${posts.length} posts');
-      state = FeedStateLoaded(
-        posts: posts,
-        hasMore: posts.length >= FeedConfig.paginationBatchSize,
+      // debugPrint('Loaded ${freshPosts.length} fresh posts, '
+      //     'merged to ${mergedPosts.length} total');
+
+      state = ExploreFeedStateLoaded(
+        posts: mergedPosts,
+        hasMore: freshPosts.length >= FeedConfig.paginationBatchSize,
         oldestTimestamp: oldestTimestamp,
+        isRefreshingInBackground: false,
       );
+
+      // Batch-fetch author profiles in background (non-blocking)
+      _batchLoadProfilesInBackground(mergedPosts);
+
+      // Cache the merged posts
+      await _cacheToStorage(mergedPosts);
     } catch (e, stackTrace) {
-      debugPrint('Error loading global feed: $e\n$stackTrace');
-      state = FeedStateError(
-        message: 'Failed to load feed: ${e.toString()}',
-      );
+      // debugPrint('Error loading explore feed: $e\n$stackTrace');
+
+      // If we have cached data, keep showing it
+      if (state is ExploreFeedStateLoaded) {
+        state = (state as ExploreFeedStateLoaded).copyWith(
+          isRefreshingInBackground: false,
+        );
+      } else {
+        state = ExploreFeedStateError(
+          message: 'Failed to load feed: ${e.toString()}',
+        );
+      }
     }
+  }
+
+  /// Load posts from cache.
+  ///
+  /// Returns true if cached data was loaded, false otherwise.
+  Future<bool> _loadFromCache() async {
+    if (!_cacheService.isInitialized) {
+      return false;
+    }
+
+    try {
+      final cached = await _cacheService.get<List<dynamic>>(
+        _feedCacheKey,
+        allowStale: true, // Always show stale data while we refresh
+      );
+
+      if (cached != null && cached.isNotEmpty) {
+        final posts = cached
+            .map((json) => Post.fromJson(json as Map<String, dynamic>))
+            .toList();
+
+        // Sort by creation time (newest first)
+        posts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+        final oldestTimestamp = posts.isNotEmpty
+            ? posts.last.createdAt.millisecondsSinceEpoch ~/ 1000
+            : null;
+
+        // debugPrint('Loaded ${posts.length} explore posts from cache');
+
+        state = ExploreFeedStateLoaded(
+          posts: posts,
+          hasMore: true,
+          oldestTimestamp: oldestTimestamp,
+          isRefreshingInBackground: true, // We'll refresh in background
+        );
+
+        // Batch-fetch author profiles in background (non-blocking)
+        _batchLoadProfilesInBackground(posts);
+
+        return true;
+      }
+    } catch (e) {
+      // debugPrint('Error loading explore feed from cache: $e');
+    }
+
+    return false;
+  }
+
+  /// Cache posts to storage.
+  Future<void> _cacheToStorage(List<Post> posts) async {
+    if (!_cacheService.isInitialized) {
+      return;
+    }
+
+    try {
+      // Only cache the most recent posts to avoid bloat
+      final postsToCache = posts.take(FeedConfig.maxPostsInMemory).toList();
+      final jsonList = postsToCache.map((post) => post.toJson()).toList();
+
+      await _cacheService.set(
+        _feedCacheKey,
+        jsonList,
+        CacheConfig.postsTtl,
+      );
+
+      // debugPrint('Cached ${postsToCache.length} explore posts');
+    } catch (e) {
+      // debugPrint('Error caching explore posts: $e');
+    }
+  }
+
+  /// Merge and deduplicate two lists of posts.
+  ///
+  /// New posts take precedence over existing ones (in case of updates).
+  List<Post> _mergeAndDeduplicate(
+    List<Post> existing,
+    List<Post> fresh,
+  ) {
+    final postMap = <String, Post>{};
+
+    // Add existing posts first
+    for (final post in existing) {
+      postMap[post.id] = post;
+    }
+
+    // Add fresh posts (overwriting any duplicates)
+    for (final post in fresh) {
+      postMap[post.id] = post;
+    }
+
+    return postMap.values.toList();
   }
 
   /// Load more posts (pagination).
@@ -190,7 +325,7 @@ class FeedNotifier extends StateNotifier<FeedState> {
     final currentState = state;
 
     // Only load more if in loaded state and not already loading
-    if (currentState is! FeedStateLoaded) return;
+    if (currentState is! ExploreFeedStateLoaded) return;
     if (currentState.isLoadingMore) return;
     if (!currentState.hasMore) return;
 
@@ -201,13 +336,13 @@ class FeedNotifier extends StateNotifier<FeedState> {
     state = currentState.copyWith(isLoadingMore: true);
 
     try {
-      debugPrint(
-        'Loading more posts (until: '
-        '${DateTime.fromMillisecondsSinceEpoch(until * 1000)}, '
-        'limit: ${FeedConfig.paginationBatchSize})...',
-      );
+      // debugPrint(
+      //   'Loading more explore posts (until: '
+      //   '${DateTime.fromMillisecondsSinceEpoch(until * 1000)}, '
+      //   'limit: ${FeedConfig.paginationBatchSize})...',
+      // );
 
-      // Create filter for older posts
+      // Create filter for older posts - no author filter
       final filter = Filter(
         kinds: [1], // kind:1 = text notes
         until: until - 1, // Exclude the oldest post we already have
@@ -218,7 +353,7 @@ class FeedNotifier extends StateNotifier<FeedState> {
       final ndkEvents = await _ndkService.fetchEvents(filter: filter);
 
       if (ndkEvents.isEmpty) {
-        debugPrint('No more posts available');
+        // debugPrint('No more explore posts available');
         state = currentState.copyWith(
           isLoadingMore: false,
           hasMore: false,
@@ -232,15 +367,18 @@ class FeedNotifier extends StateNotifier<FeedState> {
       // Sort new posts by creation time (newest first)
       newPosts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-      // Combine with existing posts
-      var combinedPosts = [...currentState.posts, ...newPosts];
+      // Merge with existing posts
+      var combinedPosts = _mergeAndDeduplicate(currentState.posts, newPosts);
+
+      // Sort combined posts
+      combinedPosts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
       // Enforce memory limit - discard oldest posts if exceeded
       if (combinedPosts.length > FeedConfig.maxPostsInMemory) {
-        debugPrint(
-          'Trimming posts from ${combinedPosts.length} '
-          'to ${FeedConfig.maxPostsInMemory}',
-        );
+        // debugPrint(
+        //   'Trimming explore posts from ${combinedPosts.length} '
+        //   'to ${FeedConfig.maxPostsInMemory}',
+        // );
         combinedPosts = combinedPosts.sublist(0, FeedConfig.maxPostsInMemory);
       }
 
@@ -249,15 +387,22 @@ class FeedNotifier extends StateNotifier<FeedState> {
           ? combinedPosts.last.createdAt.millisecondsSinceEpoch ~/ 1000
           : null;
 
-      debugPrint('Loaded ${newPosts.length} more posts, total: ${combinedPosts.length}');
-      state = FeedStateLoaded(
+      // debugPrint(
+      //     'Loaded ${newPosts.length} more explore posts, total: ${combinedPosts.length}');
+      state = ExploreFeedStateLoaded(
         posts: combinedPosts,
         isLoadingMore: false,
         hasMore: newPosts.length >= FeedConfig.paginationBatchSize,
         oldestTimestamp: newOldestTimestamp,
       );
+
+      // Batch-fetch author profiles for new posts in background (non-blocking)
+      _batchLoadProfilesInBackground(newPosts);
+
+      // Update cache with new posts
+      await _cacheToStorage(combinedPosts);
     } catch (e, stackTrace) {
-      debugPrint('Error loading more posts: $e\n$stackTrace');
+      // debugPrint('Error loading more explore posts: $e\n$stackTrace');
       // Revert to previous state without loading indicator
       state = currentState.copyWith(isLoadingMore: false);
     }
@@ -387,46 +532,24 @@ class FeedNotifier extends StateNotifier<FeedState> {
     return '${pubkey.substring(0, 8)}...${pubkey.substring(pubkey.length - 4)}';
   }
 
-  /// Publish a reply to an event.
+  /// Batch-load author profiles in background.
   ///
-  /// Creates a kind:1 event with NIP-10 compliant tags for threading.
-  /// Returns true if successful, false otherwise.
-  Future<bool> publishReply({
-    required String content,
-    required String privateKey,
-    required String rootId,
-    required String rootAuthorPubkey,
-    String? replyToId,
-    String? replyToAuthorPubkey,
-  }) async {
-    try {
-      debugPrint('Publishing reply to: ${rootId.substring(0, 8)}...');
+  /// This is fire-and-forget - profiles are fetched asynchronously
+  /// and cached. When they arrive, the ProfileCacheProvider is notified
+  /// and reactive widgets (ProfileName, ProfileAvatar) auto-update.
+  void _batchLoadProfilesInBackground(List<Post> posts) {
+    if (posts.isEmpty) return;
 
-      // Create NIP-10 compliant tags
-      final tags = _threadService.createReplyTags(
-        rootId: rootId,
-        rootAuthorPubkey: rootAuthorPubkey,
-        replyToId: replyToId,
-        replyToAuthorPubkey: replyToAuthorPubkey,
-      );
+    // Extract unique author pubkeys
+    final pubkeys = posts.map((p) => p.author.pubkey).toSet().toList();
 
-      // Publish the reply
-      final publishedEvent = await _ndkService.publishTextNote(
-        content: content,
-        privateKey: privateKey,
-        tags: tags,
-      );
+    // debugPrint('Batch loading ${pubkeys.length} profiles in background...');
 
-      if (publishedEvent != null) {
-        debugPrint('Reply published: ${publishedEvent.id}');
-        return true;
-      }
-
-      return false;
-    } catch (e, stackTrace) {
-      debugPrint('Error publishing reply: $e\n$stackTrace');
-      return false;
-    }
+    // Fire and forget - don't await
+    unawaited(_profileService.fetchProfiles(pubkeys).catchError((Object e) {
+      // debugPrint('Error batch loading profiles: $e');
+      return <String, Profile>{}; // Return empty map to satisfy type
+    }));
   }
 }
 

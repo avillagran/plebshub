@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:ndk/ndk.dart';
 
+import '../core/constants/cache_config.dart';
 import '../features/profile/models/profile.dart';
+import 'cache/cache_service.dart';
 import 'ndk_service.dart';
 
 /// Service for fetching and caching Nostr profiles (kind:0 metadata).
@@ -9,7 +11,7 @@ import 'ndk_service.dart';
 /// This service provides methods to:
 /// - Fetch individual profiles by pubkey
 /// - Batch fetch multiple profiles
-/// - Cache profiles in memory for quick access
+/// - Cache profiles in memory and on disk for persistence
 /// - Fetch a user's posts (kind:1 events)
 ///
 /// Example:
@@ -34,6 +36,7 @@ class ProfileService {
   static ProfileService get instance => _instance;
 
   final _ndkService = NdkService.instance;
+  final _cacheService = CacheService.instance;
 
   /// In-memory cache of profiles by pubkey.
   final Map<String, Profile> _profileCache = {};
@@ -49,13 +52,33 @@ class ProfileService {
   }
 
   /// Clear a specific profile from cache.
-  void clearFromCache(String pubkey) {
+  Future<void> clearFromCache(String pubkey) async {
     _profileCache.remove(pubkey);
+
+    // Also clear from disk cache
+    if (_cacheService.isInitialized) {
+      final cacheKey = '${CacheConfig.profileKeyPrefix}$pubkey';
+      try {
+        await _cacheService.remove(cacheKey);
+      } catch (e) {
+        debugPrint('Error clearing profile from disk cache: $e');
+      }
+    }
   }
 
   /// Clear all cached profiles.
-  void clearCache() {
+  Future<void> clearCache() async {
     _profileCache.clear();
+
+    // Also clear from disk cache
+    if (_cacheService.isInitialized) {
+      try {
+        final count = await _cacheService.removeByPrefix(CacheConfig.profileKeyPrefix);
+        debugPrint('Cleared $count profiles from disk cache');
+      } catch (e) {
+        debugPrint('Error clearing profiles from disk cache: $e');
+      }
+    }
   }
 
   /// Fetch a single profile by pubkey.
@@ -65,9 +88,31 @@ class ProfileService {
   ///
   /// Set [forceRefresh] to true to bypass cache and fetch fresh data.
   Future<Profile> fetchProfile(String pubkey, {bool forceRefresh = false}) async {
-    // Return cached profile if available and not forcing refresh
+    final cacheKey = '${CacheConfig.profileKeyPrefix}$pubkey';
+
+    // Return in-memory cached profile if available and not forcing refresh
     if (!forceRefresh && _profileCache.containsKey(pubkey)) {
       return _profileCache[pubkey]!;
+    }
+
+    // Check disk cache if not forcing refresh
+    if (!forceRefresh && _cacheService.isInitialized) {
+      try {
+        final cached = await _cacheService.get<Map<String, dynamic>>(
+          cacheKey,
+          allowStale: false,
+        );
+
+        if (cached != null) {
+          final profile = Profile.fromJson(cached);
+          _profileCache[pubkey] = profile;
+          debugPrint('Loaded profile from disk cache: ${profile.nameForDisplay}');
+          return profile;
+        }
+      } catch (e) {
+        debugPrint('Error loading profile from disk cache: $e');
+        // Continue to fetch from relays
+      }
     }
 
     try {
@@ -96,9 +141,23 @@ class ProfileService {
       events.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       final profile = Profile.fromEvent(events.first);
 
-      // Cache the profile
+      // Cache the profile in memory
       _profileCache[pubkey] = profile;
-      debugPrint('Cached profile for: ${profile.nameForDisplay}');
+
+      // Save to disk cache
+      if (_cacheService.isInitialized) {
+        try {
+          await _cacheService.set(
+            cacheKey,
+            profile.toJson(),
+            CacheConfig.profilesTtl,
+          );
+          debugPrint('Saved profile to disk cache: ${profile.nameForDisplay}');
+        } catch (e) {
+          debugPrint('Error saving profile to disk cache: $e');
+          // Continue even if caching fails
+        }
+      }
 
       return profile;
     } catch (e) {
@@ -122,7 +181,7 @@ class ProfileService {
     final results = <String, Profile>{};
     final pubkeysToFetch = <String>[];
 
-    // Check cache first
+    // Check in-memory cache first
     for (final pubkey in pubkeys) {
       if (_profileCache.containsKey(pubkey)) {
         results[pubkey] = _profileCache[pubkey]!;
@@ -131,16 +190,44 @@ class ProfileService {
       }
     }
 
-    if (pubkeysToFetch.isEmpty) {
+    // Check disk cache for remaining pubkeys
+    final stillNeedToFetch = <String>[];
+    if (_cacheService.isInitialized) {
+      for (final pubkey in pubkeysToFetch) {
+        final cacheKey = '${CacheConfig.profileKeyPrefix}$pubkey';
+        try {
+          final cached = await _cacheService.get<Map<String, dynamic>>(
+            cacheKey,
+            allowStale: false,
+          );
+
+          if (cached != null) {
+            final profile = Profile.fromJson(cached);
+            _profileCache[pubkey] = profile;
+            results[pubkey] = profile;
+          } else {
+            stillNeedToFetch.add(pubkey);
+          }
+        } catch (e) {
+          debugPrint('Error loading profile from disk cache: $e');
+          stillNeedToFetch.add(pubkey);
+        }
+      }
+    } else {
+      // If cache not initialized, need to fetch all
+      stillNeedToFetch.addAll(pubkeysToFetch);
+    }
+
+    if (stillNeedToFetch.isEmpty) {
       return results;
     }
 
     try {
-      debugPrint('Batch fetching ${pubkeysToFetch.length} profiles...');
+      debugPrint('Batch fetching ${stillNeedToFetch.length} profiles...');
 
       final filter = Filter(
         kinds: [0],
-        authors: pubkeysToFetch,
+        authors: stillNeedToFetch,
       );
 
       final events = await _ndkService.fetchEvents(
@@ -162,10 +249,25 @@ class ProfileService {
         final profile = Profile.fromEvent(entry.value);
         _profileCache[entry.key] = profile;
         results[entry.key] = profile;
+
+        // Save to disk cache
+        if (_cacheService.isInitialized) {
+          final cacheKey = '${CacheConfig.profileKeyPrefix}${entry.key}';
+          try {
+            await _cacheService.set(
+              cacheKey,
+              profile.toJson(),
+              CacheConfig.profilesTtl,
+            );
+          } catch (e) {
+            debugPrint('Error saving profile to disk cache: $e');
+            // Continue even if caching fails
+          }
+        }
       }
 
       // Add placeholders for pubkeys not found
-      for (final pubkey in pubkeysToFetch) {
+      for (final pubkey in stillNeedToFetch) {
         if (!results.containsKey(pubkey)) {
           final placeholder = Profile.placeholder(pubkey);
           _profileCache[pubkey] = placeholder;
@@ -173,13 +275,13 @@ class ProfileService {
         }
       }
 
-      debugPrint('Fetched ${eventsByPubkey.length} profiles, ${pubkeysToFetch.length - eventsByPubkey.length} not found');
+      debugPrint('Fetched ${eventsByPubkey.length} profiles, ${stillNeedToFetch.length - eventsByPubkey.length} not found');
 
       return results;
     } catch (e) {
       debugPrint('Error batch fetching profiles: $e');
       // Return placeholders for all unfetched pubkeys
-      for (final pubkey in pubkeysToFetch) {
+      for (final pubkey in stillNeedToFetch) {
         final placeholder = Profile.placeholder(pubkey);
         _profileCache[pubkey] = placeholder;
         results[pubkey] = placeholder;
@@ -336,6 +438,117 @@ class ProfileService {
     } catch (e) {
       debugPrint('Error checking follow status: $e');
       return false;
+    }
+  }
+
+  /// Fetch the list of pubkeys a user is following.
+  ///
+  /// Returns a list of pubkeys from the user's contact list (kind:3).
+  Future<List<String>> fetchFollowing(String pubkey) async {
+    try {
+      final filter = Filter(
+        kinds: [3],
+        authors: [pubkey],
+        limit: 1,
+      );
+
+      final events = await _ndkService.fetchEvents(
+        filter: filter,
+        timeout: const Duration(seconds: 5),
+      );
+
+      if (events.isEmpty) return [];
+
+      final contactList = events.first;
+      return contactList.tags
+          .where((tag) => tag.length >= 2 && tag[0] == 'p')
+          .map((tag) => tag[1])
+          .toList();
+    } catch (e) {
+      debugPrint('Error fetching following list: $e');
+      return [];
+    }
+  }
+
+  /// Fetch the list of pubkeys following a user.
+  ///
+  /// Note: This is expensive and returns an estimate.
+  Future<List<String>> fetchFollowers(String pubkey) async {
+    try {
+      final filter = Filter(
+        kinds: [3],
+        pTags: [pubkey],
+        limit: 500,
+      );
+
+      final events = await _ndkService.fetchEvents(
+        filter: filter,
+        timeout: const Duration(seconds: 10),
+      );
+
+      // Deduplicate by author
+      return events.map((e) => e.pubKey).toSet().toList();
+    } catch (e) {
+      debugPrint('Error fetching followers list: $e');
+      return [];
+    }
+  }
+
+  /// Follow a user by updating the contact list.
+  ///
+  /// Returns true if successful.
+  Future<bool> followUser({
+    required String currentUserPubkey,
+    required String targetPubkey,
+    required String privateKey,
+  }) async {
+    // TODO: Implement contact list update (kind:3)
+    debugPrint('followUser not yet implemented');
+    return false;
+  }
+
+  /// Unfollow a user by updating the contact list.
+  ///
+  /// Returns true if successful.
+  Future<bool> unfollowUser({
+    required String currentUserPubkey,
+    required String targetPubkey,
+    required String privateKey,
+  }) async {
+    // TODO: Implement contact list update (kind:3)
+    debugPrint('unfollowUser not yet implemented');
+    return false;
+  }
+
+  /// Update the user's profile metadata.
+  ///
+  /// Returns the published event if successful, null otherwise.
+  Future<Nip01Event?> updateProfile({
+    required Profile profile,
+    required String privateKey,
+  }) async {
+    // TODO: Implement profile update (kind:0)
+    debugPrint('updateProfile not yet implemented');
+    return null;
+  }
+
+  // Update listeners for real-time profile updates (stub)
+  final List<void Function(String pubkey, Profile profile)> _updateListeners = [];
+
+  /// Add a listener for profile updates.
+  void addUpdateListener(void Function(String pubkey, Profile profile) listener) {
+    _updateListeners.add(listener);
+  }
+
+  /// Remove a profile update listener.
+  void removeUpdateListener(void Function(String pubkey, Profile profile) listener) {
+    _updateListeners.remove(listener);
+  }
+
+  /// Notify listeners of a profile update.
+  void _notifyListeners(String pubkey, Profile profile) {
+    for (final listener in _updateListeners) {
+      listener(pubkey, profile);
     }
   }
 }

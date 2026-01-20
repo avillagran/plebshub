@@ -2,17 +2,36 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../features/feed/screens/feed_screen.dart';
-import '../features/feed/screens/compose_screen.dart';
-import '../features/feed/screens/thread_screen.dart';
+import '../features/auth/providers/auth_provider.dart';
+import '../features/auth/providers/auth_state.dart';
 import '../features/auth/screens/auth_screen.dart';
+import '../features/feed/models/post.dart';
+import '../features/feed/screens/compose_screen.dart';
+import '../features/feed/screens/feed_screen.dart';
+import '../features/feed/screens/thread_screen.dart';
 import '../features/profile/screens/profile_screen.dart';
 
 /// Provider for the app router.
 final routerProvider = Provider<GoRouter>((ref) {
+  // Watch auth state for route guards
+  final authState = ref.watch(authProvider);
+
   return GoRouter(
     initialLocation: '/',
     debugLogDiagnostics: true,
+    refreshListenable: _AuthStateNotifier(ref),
+    redirect: (context, state) {
+      final isAuthenticated = authState is AuthStateAuthenticated;
+      final isAuthRoute = state.matchedLocation == '/auth';
+
+      // If going to auth page while authenticated, redirect to home
+      if (isAuthRoute && isAuthenticated) {
+        return '/';
+      }
+
+      // Allow access to all routes (no forced auth requirement)
+      return null;
+    },
     routes: [
       GoRoute(
         path: '/',
@@ -42,7 +61,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         name: 'thread',
         builder: (context, state) {
           final eventId = state.pathParameters['eventId']!;
-          return ThreadScreen(eventId: eventId);
+          final initialPost = state.extra as Post?;
+          return ThreadScreen(
+            eventId: eventId,
+            initialPost: initialPost,
+          );
         },
       ),
       GoRoute(
@@ -68,6 +91,17 @@ final routerProvider = Provider<GoRouter>((ref) {
     ),
   );
 });
+
+/// Helper class to notify GoRouter when auth state changes.
+class _AuthStateNotifier extends ChangeNotifier {
+  _AuthStateNotifier(this._ref) {
+    _ref.listen(authProvider, (previous, next) {
+      notifyListeners();
+    });
+  }
+
+  final Ref _ref;
+}
 
 // Placeholder widgets - will be replaced with actual screens
 class ChannelsPlaceholder extends StatelessWidget {

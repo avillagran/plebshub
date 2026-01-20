@@ -3,15 +3,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plebshub_ui/plebshub_ui.dart';
 
+import '../../auth/providers/auth_provider.dart';
+import '../../auth/providers/auth_state.dart';
 import '../../../services/image_precache_service.dart';
 import '../../../shared/utils/nostr_content_parser.dart';
 import '../models/post.dart';
 import '../providers/feed_provider.dart';
 import '../providers/reaction_provider.dart';
+import '../providers/reply_count_provider.dart';
 import '../providers/repost_provider.dart';
 import '../widgets/post_card.dart';
-import '../../auth/providers/auth_provider.dart';
-import '../../auth/providers/auth_state.dart';
 
 /// The main feed screen showing the user's timeline.
 class FeedScreen extends ConsumerStatefulWidget {
@@ -87,6 +88,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
       if (eventIds.isNotEmpty) {
         ref.read(reactionProvider.notifier).fetchReactions(eventIds);
         ref.read(repostProvider.notifier).fetchReposts(eventIds);
+        ref.read(replyCountProvider.notifier).fetchReplyCounts(eventIds);
       }
     }
   }
@@ -99,6 +101,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
       if (eventIds.isNotEmpty) {
         ref.read(reactionProvider.notifier).fetchReactions(eventIds);
         ref.read(repostProvider.notifier).fetchReposts(eventIds);
+        ref.read(replyCountProvider.notifier).fetchReplyCounts(eventIds);
       }
     }
   }
@@ -134,6 +137,18 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     final feedState = ref.watch(feedProvider);
     final authState = ref.watch(authProvider);
 
+    // Listen to auth state changes and reload feed
+    ref.listen<AuthState>(authProvider, (previous, next) {
+      // When user logs in or logs out, reload the feed
+      if ((previous is! AuthStateAuthenticated && next is AuthStateAuthenticated) ||
+          (previous is AuthStateAuthenticated && next is! AuthStateAuthenticated)) {
+        Future.microtask(() async {
+          await ref.read(feedProvider.notifier).loadGlobalFeed();
+          _fetchReactionsForLoadedPosts();
+        });
+      }
+    });
+
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -155,10 +170,17 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
               // TODO: Implement search
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.account_circle),
-            onPressed: () => context.push('/auth'),
-          ),
+          // Show different icon based on auth state
+          if (authState case AuthStateAuthenticated(:final keypair))
+            IconButton(
+              icon: const Icon(Icons.account_circle),
+              onPressed: () => context.go('/profile/${keypair.publicKey}'),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.login),
+              onPressed: () => context.push('/auth'),
+            ),
         ],
       ),
       body: _buildBody(feedState),

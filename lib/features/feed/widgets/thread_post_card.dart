@@ -1,18 +1,20 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plebshub_ui/plebshub_ui.dart';
 import 'package:zap_widgets/zap_widgets.dart';
 
 import '../../../shared/shared.dart';
 import '../models/post.dart';
+import '../providers/reply_count_provider.dart';
 import 'like_button.dart';
 import 'repost_button.dart';
 
 /// A card for displaying posts in a thread view with hierarchy indicators.
 ///
 /// Shows connection lines and indentation based on reply depth.
-class ThreadPostCard extends StatelessWidget {
+class ThreadPostCard extends ConsumerWidget {
   const ThreadPostCard({
     super.key,
     required this.post,
@@ -52,7 +54,7 @@ class ThreadPostCard extends StatelessWidget {
   static const double indentWidth = 24.0;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final effectiveDepth = depth > maxIndentDepth ? maxIndentDepth : depth;
     final leftPadding = effectiveDepth * indentWidth;
 
@@ -91,7 +93,7 @@ class ThreadPostCard extends StatelessWidget {
                     const SizedBox(height: 8),
                     _buildContent(context),
                     const SizedBox(height: 8),
-                    _buildActions(context),
+                    _buildActions(context, ref),
                   ],
                 ),
               ),
@@ -228,7 +230,10 @@ class ThreadPostCard extends StatelessWidget {
   }
 
   /// Build the action buttons row.
-  Widget _buildActions(BuildContext context) {
+  Widget _buildActions(BuildContext context, WidgetRef ref) {
+    final replyCountState = ref.watch(replyCountProvider);
+    final replyCount = replyCountState.getReplyCount(post.id);
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -246,10 +251,10 @@ class ThreadPostCard extends StatelessWidget {
                   size: 18,
                   color: AppColors.textSecondary,
                 ),
-                if (post.replyCount > 0) ...[
+                if (replyCount > 0) ...[
                   const SizedBox(width: 4),
                   Text(
-                    '${post.replyCount}',
+                    '$replyCount',
                     style: AppTypography.labelSmall,
                   ),
                 ],

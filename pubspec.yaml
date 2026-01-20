@@ -43,6 +43,11 @@ dependencies:
   path_provider: ^2.1.2
   flutter_secure_storage: ^9.0.0
 
+  # HTML parsing (for link previews)
+  html: ^0.15.4
+  http: ^1.2.0
+  shared_preferences: ^2.5.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

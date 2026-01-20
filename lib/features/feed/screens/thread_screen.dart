@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plebshub_ui/plebshub_ui.dart';
 
+import '../models/post.dart';
 import '../providers/thread_provider.dart';
 import '../widgets/reply_composer.dart';
 import '../widgets/thread_post_card.dart';
@@ -14,14 +15,21 @@ import '../widgets/thread_post_card.dart';
 /// - The main post (expanded)
 /// - All replies in a threaded view
 /// - Reply composer at the bottom
+///
+/// If [initialPost] is provided, the post will be displayed immediately
+/// while replies load asynchronously.
 class ThreadScreen extends ConsumerStatefulWidget {
   const ThreadScreen({
     super.key,
     required this.eventId,
+    this.initialPost,
   });
 
   /// The event ID to display.
   final String eventId;
+
+  /// Optional initial post data to display immediately.
+  final Post? initialPost;
 
   @override
   ConsumerState<ThreadScreen> createState() => _ThreadScreenState();
@@ -34,7 +42,12 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final threadState = ref.watch(threadProvider(widget.eventId));
+    // Use the new provider that supports initial post data
+    final params = ThreadInitParams(
+      eventId: widget.eventId,
+      initialPost: widget.initialPost,
+    );
+    final threadState = ref.watch(threadProviderWithPost(params));
 
     return Scaffold(
       appBar: AppBar(
@@ -44,11 +57,11 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
           onPressed: () => context.pop(),
         ),
       ),
-      body: _buildBody(threadState),
+      body: _buildBody(threadState, params),
     );
   }
 
-  Widget _buildBody(ThreadState state) {
+  Widget _buildBody(ThreadState state, ThreadInitParams params) {
     return switch (state) {
       ThreadStateInitial() => const Center(
           child: Text('Initializing...'),
@@ -81,13 +94,19 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
             ],
           ),
         ),
-      ThreadStateLoaded(:final rootPost, :final parentChain, :final flattenedReplies) =>
+      ThreadStateLoaded(
+        :final rootPost,
+        :final parentChain,
+        :final flattenedReplies,
+        :final isLoadingReplies,
+      ) =>
         Column(
           children: [
             Expanded(
               child: RefreshIndicator(
-                onRefresh: () =>
-                    ref.read(threadProvider(widget.eventId).notifier).refresh(),
+                onRefresh: () => ref
+                    .read(threadProviderWithPost(params).notifier)
+                    .refresh(),
                 child: CustomScrollView(
                   slivers: [
                     // Parent context (if exists)
@@ -112,7 +131,10 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                             ...parentChain.map(
                               (post) => ParentContextCard(
                                 post: post,
-                                onTap: () => context.push('/thread/${post.id}'),
+                                onTap: () => context.push(
+                                  '/thread/${post.id}',
+                                  extra: post,
+                                ),
                               ),
                             ),
                           ],
@@ -139,43 +161,29 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                         color: AppColors.border,
                       ),
                     ),
-                    // Replies header
-                    if (flattenedReplies.isNotEmpty)
+                    // Replies section
+                    if (isLoadingReplies)
                       SliverToBoxAdapter(
                         child: Padding(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 16,
-                            vertical: 12,
+                            vertical: 24,
                           ),
-                          child: Text(
-                            '${flattenedReplies.length} ${flattenedReplies.length == 1 ? 'Reply' : 'Replies'}',
-                            style: AppTypography.titleSmall,
-                          ),
-                        ),
-                      ),
-                    // Replies list
-                    if (flattenedReplies.isEmpty)
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.all(32),
-                          child: Column(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(
-                                Icons.chat_bubble_outline,
-                                size: 48,
-                                color: AppColors.textSecondary,
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'No replies yet',
-                                style: AppTypography.bodyMedium.copyWith(
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
                                   color: AppColors.textSecondary,
                                 ),
                               ),
-                              const SizedBox(height: 8),
+                              const SizedBox(width: 12),
                               Text(
-                                'Be the first to reply!',
-                                style: AppTypography.bodySmall.copyWith(
+                                'Loading replies...',
+                                style: AppTypography.bodyMedium.copyWith(
                                   color: AppColors.textSecondary,
                                 ),
                               ),
@@ -183,9 +191,54 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                           ),
                         ),
                       )
-                    else
-                      SliverList(
-                        delegate: SliverChildBuilderDelegate(
+                    else ...[
+                      // Replies header
+                      if (flattenedReplies.isNotEmpty)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            child: Text(
+                              '${flattenedReplies.length} ${flattenedReplies.length == 1 ? 'Reply' : 'Replies'}',
+                              style: AppTypography.titleSmall,
+                            ),
+                          ),
+                        ),
+                      // No replies message
+                      if (flattenedReplies.isEmpty)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.all(32),
+                            child: Column(
+                              children: [
+                                Icon(
+                                  Icons.chat_bubble_outline,
+                                  size: 48,
+                                  color: AppColors.textSecondary,
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'No replies yet',
+                                  style: AppTypography.bodyMedium.copyWith(
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Be the first to reply!',
+                                  style: AppTypography.bodySmall.copyWith(
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      else
+                        SliverList(
+                          delegate: SliverChildBuilderDelegate(
                           (context, index) {
                             final reply = flattenedReplies[index];
                             return Column(
@@ -193,8 +246,10 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                                 ThreadPostCard(
                                   post: reply.post,
                                   depth: reply.depth,
-                                  onTap: () =>
-                                      context.push('/thread/${reply.post.id}'),
+                                  onTap: () => context.push(
+                                    '/thread/${reply.post.id}',
+                                    extra: reply.post,
+                                  ),
                                   onReplyTap: () {
                                     setState(() {
                                       _replyingToId = reply.post.id;
@@ -216,8 +271,9 @@ class _ThreadScreenState extends ConsumerState<ThreadScreen> {
                             );
                           },
                           childCount: flattenedReplies.length,
+                          ),
                         ),
-                      ),
+                    ],
                     // Bottom padding for reply composer
                     const SliverToBoxAdapter(
                       child: SizedBox(height: 80),

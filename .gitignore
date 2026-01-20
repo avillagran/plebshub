@@ -138,6 +138,21 @@ secrets/
 *.key
 
 # ==================================
+# Nostr Identity / Keys
+# ==================================
+# NEVER commit private keys (nsec)
+*nsec*
+*private_key*
+*privatekey*
+*.nsec
+nostr_keys.json
+identity.json
+keys.json
+# Backup files that might contain keys
+*.bak.json
+*.backup.json
+
+# ==================================
 # Isar Database
 # ==================================
 *.isar

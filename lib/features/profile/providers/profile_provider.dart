@@ -155,7 +155,7 @@ class ProfileScreenNotifier extends StateNotifier<ProfileScreenState> {
   /// Refresh profile data.
   Future<void> refresh() async {
     // Clear cache for this profile
-    _profileService.clearFromCache(_pubkey);
+    await _profileService.clearFromCache(_pubkey);
     await loadProfile();
   }
 

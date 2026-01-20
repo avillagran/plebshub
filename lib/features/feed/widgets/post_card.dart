@@ -1,11 +1,13 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:plebshub_ui/plebshub_ui.dart';
 import 'package:zap_widgets/zap_widgets.dart';
 
 import '../../../shared/shared.dart';
 import '../models/post.dart';
+import '../providers/reply_count_provider.dart';
 import 'like_button.dart';
 import 'repost_button.dart';
 
@@ -13,7 +15,7 @@ import 'repost_button.dart';
 ///
 /// Uses a flat, seamless design with thin dividers between posts.
 /// Avatar on left, content on right in a row layout.
-class PostCard extends StatelessWidget {
+class PostCard extends ConsumerWidget {
   const PostCard({
     super.key,
     required this.post,
@@ -35,7 +37,7 @@ class PostCard extends StatelessWidget {
   final bool showDivider;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
 
     return Material(
@@ -95,9 +97,12 @@ class PostCard extends StatelessWidget {
                             // TODO: Search for hashtag
                           },
                         ),
+                        const SizedBox(height: 8),
+                        // Link previews
+                        _buildLinkPreviews(),
                         const SizedBox(height: 12),
                         // Actions row
-                        _buildActionsRow(context),
+                        _buildActionsRow(context, ref),
                       ],
                     ),
                   ),
@@ -179,14 +184,17 @@ class PostCard extends StatelessWidget {
   }
 
   /// Build the actions row (Reply, Repost, Like, Zap) spread evenly.
-  Widget _buildActionsRow(BuildContext context) {
+  Widget _buildActionsRow(BuildContext context, WidgetRef ref) {
+    final replyCountState = ref.watch(replyCountProvider);
+    final replyCount = replyCountState.getReplyCount(post.id);
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         // Reply
         _CompactActionButton(
           icon: Icons.chat_bubble_outline,
-          count: post.replyCount,
+          count: replyCount,
           onTap: () => _navigateToThread(context),
         ),
         // Repost
@@ -252,7 +260,7 @@ class PostCard extends StatelessWidget {
 
   /// Navigate to the thread view for this post.
   void _navigateToThread(BuildContext context) {
-    context.push('/thread/${post.id}');
+    context.push('/thread/${post.id}', extra: post);
   }
 
   /// Handle mention tap - navigate to profile or note.
@@ -288,6 +296,33 @@ class PostCard extends StatelessWidget {
     } else {
       return '${time.day}/${time.month}';
     }
+  }
+
+  /// Build link preview cards for URLs in the post content.
+  Widget _buildLinkPreviews() {
+    // Parse content to extract URL segments
+    const parser = NostrContentParser();
+    final segments = parser.parse(post.content);
+
+    // Extract URLs that are not images or videos
+    final urlSegments = segments.whereType<UrlSegment>().toList();
+
+    // Limit to max 2 link previews to avoid clutter
+    final previewUrls = urlSegments.take(2).map((s) => s.url).toList();
+
+    if (previewUrls.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final url in previewUrls) ...[
+          LinkPreviewWidget(url: url),
+          if (url != previewUrls.last) const SizedBox(height: 8),
+        ],
+      ],
+    );
   }
 }
 

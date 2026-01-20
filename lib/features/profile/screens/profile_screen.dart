@@ -227,16 +227,32 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         controller: _tabController,
         children: [
           // Posts tab
-          _buildPostsTab(state),
+          _LazyTab(
+            controller: _tabController,
+            index: 0,
+            builder: () => _buildPostsTab(state),
+          ),
 
           // Replies tab (placeholder)
-          _buildPlaceholderTab('Replies', 'Replies will appear here'),
+          _LazyTab(
+            controller: _tabController,
+            index: 1,
+            builder: () => _buildPlaceholderTab('Replies', 'Replies will appear here'),
+          ),
 
           // Media tab (placeholder)
-          _buildPlaceholderTab('Media', 'Media posts will appear here'),
+          _LazyTab(
+            controller: _tabController,
+            index: 2,
+            builder: () => _buildPlaceholderTab('Media', 'Media posts will appear here'),
+          ),
 
           // Likes tab (placeholder)
-          _buildPlaceholderTab('Likes', 'Liked posts will appear here'),
+          _LazyTab(
+            controller: _tabController,
+            index: 3,
+            builder: () => _buildPlaceholderTab('Likes', 'Liked posts will appear here'),
+          ),
         ],
       ),
     );
@@ -386,6 +402,62 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
         SnackBar(content: Text('Navigate to profile: ${mention.shortDisplay}')),
       );
     }
+  }
+}
+
+/// Lazy-loading tab widget that only builds content when visible.
+///
+/// Prevents animation overlap by deferring tab content construction
+/// until the tab is actually selected.
+class _LazyTab extends StatefulWidget {
+  const _LazyTab({
+    required this.controller,
+    required this.index,
+    required this.builder,
+  });
+
+  final TabController controller;
+  final int index;
+  final Widget Function() builder;
+
+  @override
+  State<_LazyTab> createState() => _LazyTabState();
+}
+
+class _LazyTabState extends State<_LazyTab> {
+  bool _hasBeenVisible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onTabChanged);
+    _checkVisibility();
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onTabChanged);
+    super.dispose();
+  }
+
+  void _onTabChanged() {
+    _checkVisibility();
+  }
+
+  void _checkVisibility() {
+    if (widget.controller.index == widget.index && !_hasBeenVisible) {
+      setState(() {
+        _hasBeenVisible = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_hasBeenVisible) {
+      return const SizedBox.shrink();
+    }
+    return widget.builder();
   }
 }
 
