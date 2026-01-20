@@ -136,17 +136,8 @@ class _ZapButtonState extends State<ZapButton>
                 size: iconSize,
                 color: _isPressed ? AppColors.zapOrange : AppColors.textSecondary,
               ),
-              if (widget.size != ZapButtonSize.small) ...[
-                const SizedBox(width: 4),
-                Text(
-                  '${widget.defaultAmount}',
-                  style: AppTypography.labelMedium.copyWith(
-                    color: _isPressed
-                        ? AppColors.zapOrange
-                        : AppColors.textSecondary,
-                  ),
-                ),
-              ],
+              // Zap count will be shown here when zap functionality is implemented
+              // For now, only show the icon without a count
             ],
           ),
         ),

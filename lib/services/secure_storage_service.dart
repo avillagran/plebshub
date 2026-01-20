@@ -1,36 +1,24 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-/// Service for platform-agnostic secure storage.
-///
-/// This service provides secure key-value storage:
-/// - Mobile/Desktop: Uses flutter_secure_storage (encrypted keychain/keystore)
-/// - Web: Returns null (web apps should use NIP-07 browser extensions)
-///
-/// Keys are stored encrypted on native platforms using:
-/// - iOS/macOS: Keychain
-/// - Android: EncryptedSharedPreferences
-/// - Windows: DPAPI
-/// - Linux: libsecret
-///
-/// Example:
-/// ```dart
-/// final storage = SecureStorageService();
-///
-/// // Write
-/// await storage.write(key: 'private_key', value: 'nsec1...');
-///
-/// // Read
-/// final key = await storage.read(key: 'private_key');
-///
-/// // Delete
-/// await storage.delete(key: 'private_key');
-/// ```
+/// Secure storage service with SharedPreferences fallback for macOS.
 class SecureStorageService {
-  SecureStorageService({FlutterSecureStorage? storage})
-      : _storage = storage ?? const FlutterSecureStorage();
+  static final SecureStorageService _instance = SecureStorageService._internal();
+  factory SecureStorageService() => _instance;
+  SecureStorageService._internal();
 
-  final FlutterSecureStorage _storage;
+  final FlutterSecureStorage _storage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
+
+  SharedPreferences? _fallbackPrefs;
+  bool _useFallback = false;
+  bool _initializingFallback = false;
+  static const String _fallbackPrefix = 'nostr_secure_';
 
   // Storage keys
   static const String keyPrivateKey = 'nostr_private_key';
@@ -38,194 +26,134 @@ class SecureStorageService {
   static const String keyNsec = 'nostr_nsec';
   static const String keyNpub = 'nostr_npub';
 
-  /// Read a value from secure storage.
-  ///
-  /// Returns null if the key doesn't exist or on web platform.
+  /// Initialize fallback if Keychain doesn't work (macOS without certificate)
+  Future<void> _initFallbackIfNeeded() async {
+    if (_fallbackPrefs != null || _initializingFallback) return;
+    if (!Platform.isMacOS && !Platform.isLinux) return;
+
+    _initializingFallback = true;
+    try {
+      // Test if secure storage works
+      await _storage.write(key: '_test', value: 'test');
+      await _storage.delete(key: '_test');
+    } catch (e) {
+      debugPrint('[SecureStorage] Keychain failed, using SharedPreferences fallback');
+      _useFallback = true;
+      _fallbackPrefs = await SharedPreferences.getInstance();
+    } finally {
+      _initializingFallback = false;
+    }
+  }
+
   Future<String?> read({required String key}) async {
-    if (kIsWeb) {
-      // Web apps should not store private keys locally
-      // They should use NIP-07 browser extensions instead
-      return null;
+    if (kIsWeb) return null;
+    await _initFallbackIfNeeded();
+
+    if (_useFallback && _fallbackPrefs != null) {
+      return _fallbackPrefs!.getString('$_fallbackPrefix$key');
     }
 
     try {
       return await _storage.read(key: key);
     } catch (e) {
-      debugPrint('Error reading from secure storage: $e');
       return null;
     }
   }
 
-  /// Write a value to secure storage.
-  ///
-  /// On web platform, this is a no-op (returns false).
   Future<bool> write({required String key, required String value}) async {
-    if (kIsWeb) {
-      // Web apps should not store private keys locally
-      debugPrint('Warning: Attempted to write to secure storage on web platform');
-      return false;
+    if (kIsWeb) return false;
+    await _initFallbackIfNeeded();
+
+    if (_useFallback && _fallbackPrefs != null) {
+      return await _fallbackPrefs!.setString('$_fallbackPrefix$key', value);
     }
 
     try {
       await _storage.write(key: key, value: value);
       return true;
     } catch (e) {
-      debugPrint('Error writing to secure storage: $e');
-      return false;
+      // Try fallback on error
+      _useFallback = true;
+      _fallbackPrefs ??= await SharedPreferences.getInstance();
+      return await _fallbackPrefs!.setString('$_fallbackPrefix$key', value);
     }
   }
 
-  /// Delete a value from secure storage.
   Future<bool> delete({required String key}) async {
-    if (kIsWeb) {
-      return false;
+    if (kIsWeb) return false;
+    await _initFallbackIfNeeded();
+
+    if (_useFallback && _fallbackPrefs != null) {
+      return await _fallbackPrefs!.remove('$_fallbackPrefix$key');
     }
 
     try {
       await _storage.delete(key: key);
       return true;
     } catch (e) {
-      debugPrint('Error deleting from secure storage: $e');
       return false;
     }
   }
 
-  /// Delete all values from secure storage.
-  Future<bool> deleteAll() async {
-    if (kIsWeb) {
-      return false;
-    }
-
-    try {
-      await _storage.deleteAll();
-      return true;
-    } catch (e) {
-      debugPrint('Error deleting all from secure storage: $e');
-      return false;
-    }
-  }
-
-  /// Check if storage contains a key.
   Future<bool> containsKey({required String key}) async {
-    if (kIsWeb) {
-      return false;
+    if (kIsWeb) return false;
+    await _initFallbackIfNeeded();
+
+    if (_useFallback && _fallbackPrefs != null) {
+      return _fallbackPrefs!.containsKey('$_fallbackPrefix$key');
     }
 
     try {
       return await _storage.containsKey(key: key);
     } catch (e) {
-      debugPrint('Error checking key in secure storage: $e');
       return false;
     }
   }
 
-  /// Read all keys from secure storage.
-  Future<Map<String, String>> readAll() async {
-    if (kIsWeb) {
-      return {};
-    }
-
-    try {
-      return await _storage.readAll();
-    } catch (e) {
-      debugPrint('Error reading all from secure storage: $e');
-      return {};
-    }
-  }
-
-  // Convenience methods for Nostr keys
-
-  /// Save a complete keypair to secure storage.
   Future<bool> saveKeypair({
     required String privateKey,
     required String publicKey,
     required String nsec,
     required String npub,
   }) async {
-    if (kIsWeb) {
-      return false;
-    }
+    if (kIsWeb) return false;
 
-    try {
-      await Future.wait([
-        write(key: keyPrivateKey, value: privateKey),
-        write(key: keyPublicKey, value: publicKey),
-        write(key: keyNsec, value: nsec),
-        write(key: keyNpub, value: npub),
-      ]);
-      return true;
-    } catch (e) {
-      debugPrint('Error saving keypair: $e');
-      return false;
-    }
+    final r1 = await write(key: keyPrivateKey, value: privateKey);
+    final r2 = await write(key: keyPublicKey, value: publicKey);
+    final r3 = await write(key: keyNsec, value: nsec);
+    final r4 = await write(key: keyNpub, value: npub);
+
+    return r1 && r2 && r3 && r4;
   }
 
-  /// Load the stored keypair.
-  ///
-  /// Returns a map with keys: privateKey, publicKey, nsec, npub.
-  /// Returns null if no keypair is stored.
   Future<Map<String, String>?> loadKeypair() async {
-    if (kIsWeb) {
-      // TODO: Check for NIP-07 extension availability
-      return null;
-    }
+    if (kIsWeb) return null;
 
-    try {
-      final results = await Future.wait([
-        read(key: keyPrivateKey),
-        read(key: keyPublicKey),
-        read(key: keyNsec),
-        read(key: keyNpub),
-      ]);
+    final privateKey = await read(key: keyPrivateKey);
+    final publicKey = await read(key: keyPublicKey);
 
-      final privateKey = results[0];
-      final publicKey = results[1];
-      final nsec = results[2];
-      final npub = results[3];
+    if (privateKey == null || publicKey == null) return null;
 
-      if (privateKey == null || publicKey == null) {
-        return null;
-      }
-
-      return {
-        'privateKey': privateKey,
-        'publicKey': publicKey,
-        'nsec': nsec ?? '',
-        'npub': npub ?? '',
-      };
-    } catch (e) {
-      debugPrint('Error loading keypair: $e');
-      return null;
-    }
+    return {
+      'privateKey': privateKey,
+      'publicKey': publicKey,
+      'nsec': await read(key: keyNsec) ?? '',
+      'npub': await read(key: keyNpub) ?? '',
+    };
   }
 
-  /// Delete the stored keypair.
   Future<bool> deleteKeypair() async {
-    if (kIsWeb) {
-      return false;
-    }
+    if (kIsWeb) return false;
 
-    try {
-      await Future.wait([
-        delete(key: keyPrivateKey),
-        delete(key: keyPublicKey),
-        delete(key: keyNsec),
-        delete(key: keyNpub),
-      ]);
-      return true;
-    } catch (e) {
-      debugPrint('Error deleting keypair: $e');
-      return false;
-    }
+    await delete(key: keyPrivateKey);
+    await delete(key: keyPublicKey);
+    await delete(key: keyNsec);
+    await delete(key: keyNpub);
+    return true;
   }
 
-  /// Check if a keypair is stored.
   Future<bool> hasKeypair() async {
-    if (kIsWeb) {
-      // TODO: Check for NIP-07 extension
-      return false;
-    }
-
+    if (kIsWeb) return false;
     return await containsKey(key: keyPrivateKey);
   }
 }
