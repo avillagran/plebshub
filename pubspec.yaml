@@ -48,6 +48,17 @@ dependencies:
   http: ^1.2.0
   shared_preferences: ^2.5.3
 
+  # Media uploads (Blossom)
+  file_picker: ^8.0.0+1
+  image_picker: ^1.0.7
+  mime: ^1.0.5
+  crypto: ^3.0.3
+
+  # Video player
+  youtube_player_flutter: ^9.1.1
+  video_player_hdr:
+    path: ../PlebsPlayer/PlebsPlayerOSS/packages/video_player_hdr
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
