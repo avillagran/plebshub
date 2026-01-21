@@ -2,18 +2,19 @@ import 'package:html/dom.dart' as html_dom;
 import 'package:html/parser.dart' as html_parser;
 import 'package:http/http.dart' as http;
 
+import '../core/constants/cache_config.dart';
 import '../shared/models/link_preview.dart';
 import 'cache/cache_service.dart';
 
 /// Service for fetching and caching link previews.
 ///
 /// Extracts OpenGraph metadata from URLs for display in link preview cards.
-/// Implements caching with 6-hour TTL to avoid repeated network requests.
+/// Implements caching with configurable TTL to avoid repeated network requests.
 ///
 /// Features:
 /// - Extracts og:title, og:description, og:image, og:site_name
 /// - Falls back to <title> and meta description if OG tags missing
-/// - Caches results for 6 hours
+/// - Caches results using CacheConfig.linkPreviewsTtl (default 24 hours)
 /// - Times out after 5 seconds
 /// - Skips image/video URLs (already handled by NostrContent)
 ///
@@ -40,8 +41,8 @@ class LinkPreviewService {
   /// Cache service for persisting previews.
   final CacheService _cacheService = CacheService.instance;
 
-  /// TTL for link preview cache (6 hours).
-  static const Duration _cacheTtl = Duration(hours: 6);
+  /// TTL for link preview cache (configured in CacheConfig).
+  static Duration get _cacheTtl => CacheConfig.linkPreviewsTtl;
 
   /// Request timeout duration.
   static const Duration _timeout = Duration(seconds: 5);
@@ -78,7 +79,7 @@ class LinkPreviewService {
   /// - Request fails or times out
   /// - No useful metadata found
   ///
-  /// Results are cached for 6 hours.
+  /// Results are cached using CacheConfig.linkPreviewsTtl (default 24 hours).
   Future<LinkPreview?> fetchPreview(String url) async {
     // Skip image/video URLs
     if (_isMediaUrl(url)) {

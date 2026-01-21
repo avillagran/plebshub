@@ -25,6 +25,10 @@ class SecureStorageService {
   static const String keyPublicKey = 'nostr_public_key';
   static const String keyNsec = 'nostr_nsec';
   static const String keyNpub = 'nostr_npub';
+  static const String keyBlossomServer = 'blossom_server_url';
+
+  /// Default Blossom server URL.
+  static const String defaultBlossomServer = 'https://blossom.primal.net';
 
   /// Initialize fallback if Keychain doesn't work (macOS without certificate)
   Future<void> _initFallbackIfNeeded() async {
@@ -155,5 +159,20 @@ class SecureStorageService {
   Future<bool> hasKeypair() async {
     if (kIsWeb) return false;
     return await containsKey(key: keyPrivateKey);
+  }
+
+  /// Get the Blossom server URL.
+  ///
+  /// Returns the stored server URL or the default if none is set.
+  Future<String> getBlossomServer() async {
+    final stored = await read(key: keyBlossomServer);
+    return stored ?? defaultBlossomServer;
+  }
+
+  /// Set the Blossom server URL.
+  ///
+  /// Returns true if successful, false otherwise.
+  Future<bool> setBlossomServer(String serverUrl) async {
+    return await write(key: keyBlossomServer, value: serverUrl);
   }
 }

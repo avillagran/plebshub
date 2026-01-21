@@ -300,7 +300,7 @@ class ParentContextCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    post.content,
+                    NostrContentParser.sanitizeText(post.content),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: AppTypography.bodySmall.copyWith(

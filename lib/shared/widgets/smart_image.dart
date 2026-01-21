@@ -55,6 +55,12 @@ class SmartImage extends StatelessWidget {
       return _buildDataUriImage(context);
     }
 
+    // Validate that the URL is a proper HTTP/HTTPS URL
+    // This prevents pubkeys or other invalid strings from being passed to CachedNetworkImage
+    if (!isValidNetworkUrl(imageUrl)) {
+      return _buildError(context, 'Invalid image URL');
+    }
+
     // Use CachedNetworkImage for regular URLs
     return CachedNetworkImage(
       imageUrl: imageUrl,
@@ -103,5 +109,24 @@ class SmartImage extends StatelessWidget {
   /// Check if a URL is a data URI (base64 encoded image).
   static bool isDataUri(String url) {
     return url.startsWith('data:image/');
+  }
+
+  /// Check if a URL is a valid network URL (http:// or https://).
+  ///
+  /// This prevents invalid strings (like pubkeys) from being passed to
+  /// CachedNetworkImage, which would cause "No host specified" errors.
+  static bool isValidNetworkUrl(String url) {
+    // Must start with http:// or https://
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      return false;
+    }
+
+    // Try to parse the URL and verify it has a valid host
+    try {
+      final uri = Uri.parse(url);
+      return uri.hasScheme && uri.host.isNotEmpty;
+    } catch (e) {
+      return false;
+    }
   }
 }

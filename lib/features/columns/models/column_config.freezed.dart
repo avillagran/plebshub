@@ -47,8 +47,12 @@ mixin _$ColumnConfig {
   /// Position in the column order (0-indexed, left to right)
   int get position => throw _privateConstructorUsedError;
 
+  /// Serializes this ColumnConfig to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
-  @JsonKey(ignore: true)
+
+  /// Create a copy of ColumnConfig
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
   $ColumnConfigCopyWith<ColumnConfig> get copyWith =>
       throw _privateConstructorUsedError;
 }
@@ -81,6 +85,8 @@ class _$ColumnConfigCopyWithImpl<$Res, $Val extends ColumnConfig>
   // ignore: unused_field
   final $Res Function($Val) _then;
 
+  /// Create a copy of ColumnConfig
+  /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
   $Res call({
@@ -163,6 +169,8 @@ class __$$ColumnConfigImplCopyWithImpl<$Res>
       _$ColumnConfigImpl _value, $Res Function(_$ColumnConfigImpl) _then)
       : super(_value, _then);
 
+  /// Create a copy of ColumnConfig
+  /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
   $Res call({
@@ -298,12 +306,14 @@ class _$ColumnConfigImpl extends _ColumnConfig {
                 other.position == position));
   }
 
-  @JsonKey(ignore: true)
+  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   int get hashCode => Object.hash(runtimeType, id, type, title, hashtag,
       userPubkey, channelId, searchQuery, width, position);
 
-  @JsonKey(ignore: true)
+  /// Create a copy of ColumnConfig
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   @pragma('vm:prefer-inline')
   _$$ColumnConfigImplCopyWith<_$ColumnConfigImpl> get copyWith =>
@@ -333,44 +343,46 @@ abstract class _ColumnConfig extends ColumnConfig {
   factory _ColumnConfig.fromJson(Map<String, dynamic> json) =
       _$ColumnConfigImpl.fromJson;
 
-  @override
-
   /// Unique identifier for this column (UUID)
-  String get id;
   @override
+  String get id;
 
   /// Type of content this column displays
-  ColumnType get type;
   @override
+  ColumnType get type;
 
   /// Custom title for the column (uses default based on type if null)
-  String? get title;
   @override
+  String? get title;
 
   /// Hashtag to display (required for [ColumnType.hashtag])
-  String? get hashtag;
   @override
+  String? get hashtag;
 
   /// User's public key (required for [ColumnType.user])
-  String? get userPubkey;
   @override
+  String? get userPubkey;
 
   /// Channel ID (required for [ColumnType.channel])
-  String? get channelId;
   @override
+  String? get channelId;
 
   /// Search query (required for [ColumnType.search])
-  String? get searchQuery;
   @override
+  String? get searchQuery;
 
   /// Column width in logical pixels
-  double get width;
   @override
+  double get width;
 
   /// Position in the column order (0-indexed, left to right)
-  int get position;
   @override
-  @JsonKey(ignore: true)
+  int get position;
+
+  /// Create a copy of ColumnConfig
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
   _$$ColumnConfigImplCopyWith<_$ColumnConfigImpl> get copyWith =>
       throw _privateConstructorUsedError;
 }

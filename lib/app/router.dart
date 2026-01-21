@@ -12,6 +12,9 @@ import '../features/feed/screens/feed_screen.dart';
 import '../features/feed/screens/thread_screen.dart';
 import '../features/profile/screens/profile_screen.dart';
 import '../features/channels/screens/channels_list_screen.dart';
+import '../features/channels/screens/channel_chat_screen.dart';
+import '../features/settings/screens/media_settings_screen.dart';
+import '../features/media/screens/media_library_screen.dart';
 import 'main_shell.dart';
 
 /// Provider for the app router.
@@ -64,6 +67,14 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const ChannelsListScreen(),
           ),
           GoRoute(
+            path: '/channels/:id',
+            name: 'channel',
+            builder: (context, state) {
+              final channelId = state.pathParameters['id']!;
+              return ChannelChatScreen(channelId: channelId);
+            },
+          ),
+          GoRoute(
             path: '/messages',
             name: 'messages',
             builder: (context, state) => const MessagesPlaceholder(),
@@ -97,6 +108,16 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/settings',
             name: 'settings',
             builder: (context, state) => const SettingsPlaceholder(),
+          ),
+          GoRoute(
+            path: '/settings/media',
+            name: 'media-settings',
+            builder: (context, state) => const MediaSettingsScreen(),
+          ),
+          GoRoute(
+            path: '/media-library',
+            name: 'media-library',
+            builder: (context, state) => const MediaLibraryScreen(),
           ),
         ],
       ),

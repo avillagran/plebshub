@@ -8,9 +8,69 @@ final linkPreviewServiceProvider = Provider<LinkPreviewService>((ref) {
   return LinkPreviewService.instance;
 });
 
+/// Provider for the in-memory link preview cache.
+///
+/// This cache sits above the Drift cache to provide synchronous access
+/// to already-fetched previews, eliminating loading states on re-renders.
+final linkPreviewCacheProvider =
+    StateNotifierProvider<LinkPreviewCacheNotifier, Map<String, LinkPreview?>>(
+  (ref) => LinkPreviewCacheNotifier(),
+);
+
+/// State notifier that maintains an in-memory cache of link previews.
+///
+/// This prevents re-fetching and loading states when widgets rebuild.
+/// The underlying service still uses Drift for persistence across app restarts.
+class LinkPreviewCacheNotifier extends StateNotifier<Map<String, LinkPreview?>> {
+  LinkPreviewCacheNotifier() : super({});
+
+  /// Maximum number of entries to keep in memory.
+  static const int _maxCacheSize = 200;
+
+  /// Check if a URL is already in the in-memory cache.
+  bool contains(String url) => state.containsKey(url);
+
+  /// Get a preview from the in-memory cache.
+  LinkPreview? get(String url) => state[url];
+
+  /// Add or update a preview in the cache.
+  void set(String url, LinkPreview? preview) {
+    // Simple LRU eviction: remove oldest entries if at capacity
+    if (state.length >= _maxCacheSize && !state.containsKey(url)) {
+      final newState = Map<String, LinkPreview?>.from(state);
+      // Remove first 20% of entries (oldest due to insertion order)
+      final keysToRemove = newState.keys.take((_maxCacheSize * 0.2).toInt()).toList();
+      for (final key in keysToRemove) {
+        newState.remove(key);
+      }
+      newState[url] = preview;
+      state = newState;
+    } else {
+      state = {...state, url: preview};
+    }
+  }
+
+  /// Clear a specific URL from the cache.
+  void remove(String url) {
+    if (state.containsKey(url)) {
+      state = Map.from(state)..remove(url);
+    }
+  }
+
+  /// Clear all cached previews.
+  void clear() {
+    state = {};
+  }
+}
+
 /// Provider for fetching a single link preview by URL.
 ///
-/// This is a family provider that caches previews per URL.
+/// Uses a two-tier caching strategy:
+/// 1. In-memory cache (synchronous, survives widget rebuilds)
+/// 2. Drift cache (persistent, survives app restarts)
+///
+/// This eliminates loading states when scrolling through a feed,
+/// as previously viewed previews are served from memory instantly.
 ///
 /// Example:
 /// ```dart
@@ -27,9 +87,23 @@ final linkPreviewServiceProvider = Provider<LinkPreviewService>((ref) {
 ///   error: (e, st) => SizedBox.shrink(), // Silently fail
 /// );
 /// ```
-final linkPreviewProvider = FutureProvider.family<LinkPreview?, String>((ref, url) async {
+final linkPreviewProvider =
+    FutureProvider.family<LinkPreview?, String>((ref, url) async {
+  final cache = ref.watch(linkPreviewCacheProvider.notifier);
+
+  // Check in-memory cache first (synchronous, no loading state)
+  if (cache.contains(url)) {
+    return cache.get(url);
+  }
+
+  // Fetch from service (which checks Drift cache, then network)
   final service = ref.watch(linkPreviewServiceProvider);
-  return service.fetchPreview(url);
+  final preview = await service.fetchPreview(url);
+
+  // Store in in-memory cache for future renders
+  cache.set(url, preview);
+
+  return preview;
 });
 
 /// Provider for fetching multiple link previews at once.

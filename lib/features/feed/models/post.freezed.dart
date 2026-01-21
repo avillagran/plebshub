@@ -53,8 +53,12 @@ mixin _$Post {
   /// Number of replies to this post
   int get replyCount => throw _privateConstructorUsedError;
 
+  /// Serializes this Post to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
-  @JsonKey(ignore: true)
+
+  /// Create a copy of Post
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
   $PostCopyWith<Post> get copyWith => throw _privateConstructorUsedError;
 }
 
@@ -89,6 +93,8 @@ class _$PostCopyWithImpl<$Res, $Val extends Post>
   // ignore: unused_field
   final $Res Function($Val) _then;
 
+  /// Create a copy of Post
+  /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
   $Res call({
@@ -152,6 +158,8 @@ class _$PostCopyWithImpl<$Res, $Val extends Post>
     ) as $Val);
   }
 
+  /// Create a copy of Post
+  /// with the given fields replaced by the non-null parameter values.
   @override
   @pragma('vm:prefer-inline')
   $PostAuthorCopyWith<$Res> get author {
@@ -192,6 +200,8 @@ class __$$PostImplCopyWithImpl<$Res>
   __$$PostImplCopyWithImpl(_$PostImpl _value, $Res Function(_$PostImpl) _then)
       : super(_value, _then);
 
+  /// Create a copy of Post
+  /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
   $Res call({
@@ -354,7 +364,7 @@ class _$PostImpl implements _Post {
                 other.replyCount == replyCount));
   }
 
-  @JsonKey(ignore: true)
+  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   int get hashCode => Object.hash(
       runtimeType,
@@ -370,7 +380,9 @@ class _$PostImpl implements _Post {
       replyToAuthorPubkey,
       replyCount);
 
-  @JsonKey(ignore: true)
+  /// Create a copy of Post
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   @pragma('vm:prefer-inline')
   _$$PostImplCopyWith<_$PostImpl> get copyWith =>
@@ -400,52 +412,54 @@ abstract class _Post implements Post {
 
   factory _Post.fromJson(Map<String, dynamic> json) = _$PostImpl.fromJson;
 
-  @override
-
   /// Event ID (32-byte hex string)
-  String get id;
   @override
+  String get id;
 
   /// Author information
-  PostAuthor get author;
   @override
+  PostAuthor get author;
 
   /// Post content (text)
-  String get content;
   @override
+  String get content;
 
   /// When the post was created
-  DateTime get createdAt;
   @override
+  DateTime get createdAt;
 
   /// Number of reactions (likes) this post has received
-  int get reactionsCount;
   @override
+  int get reactionsCount;
 
   /// Number of times this post has been reposted
-  int get repostsCount;
   @override
+  int get repostsCount;
 
   /// Number of zaps (Lightning payments) this post has received
-  int get zapsCount;
   @override
+  int get zapsCount;
 
   /// Reply-to event ID (if this is a reply)
-  String? get replyToId;
   @override
+  String? get replyToId;
 
   /// Root event ID (for threading)
-  String? get rootEventId;
   @override
+  String? get rootEventId;
 
   /// Author pubkey of the post being replied to (for "Replying to @username")
-  String? get replyToAuthorPubkey;
   @override
+  String? get replyToAuthorPubkey;
 
   /// Number of replies to this post
-  int get replyCount;
   @override
-  @JsonKey(ignore: true)
+  int get replyCount;
+
+  /// Create a copy of Post
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
   _$$PostImplCopyWith<_$PostImpl> get copyWith =>
       throw _privateConstructorUsedError;
 }
@@ -471,8 +485,12 @@ mixin _$PostAuthor {
   /// About/bio text
   String? get about => throw _privateConstructorUsedError;
 
+  /// Serializes this PostAuthor to a JSON map.
   Map<String, dynamic> toJson() => throw _privateConstructorUsedError;
-  @JsonKey(ignore: true)
+
+  /// Create a copy of PostAuthor
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
   $PostAuthorCopyWith<PostAuthor> get copyWith =>
       throw _privateConstructorUsedError;
 }
@@ -501,6 +519,8 @@ class _$PostAuthorCopyWithImpl<$Res, $Val extends PostAuthor>
   // ignore: unused_field
   final $Res Function($Val) _then;
 
+  /// Create a copy of PostAuthor
+  /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
   $Res call({
@@ -559,6 +579,8 @@ class __$$PostAuthorImplCopyWithImpl<$Res>
       _$PostAuthorImpl _value, $Res Function(_$PostAuthorImpl) _then)
       : super(_value, _then);
 
+  /// Create a copy of PostAuthor
+  /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
   $Res call({
@@ -644,12 +666,14 @@ class _$PostAuthorImpl implements _PostAuthor {
             (identical(other.about, about) || other.about == about));
   }
 
-  @JsonKey(ignore: true)
+  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   int get hashCode =>
       Object.hash(runtimeType, pubkey, displayName, nip05, picture, about);
 
-  @JsonKey(ignore: true)
+  /// Create a copy of PostAuthor
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   @pragma('vm:prefer-inline')
   _$$PostAuthorImplCopyWith<_$PostAuthorImpl> get copyWith =>
@@ -674,28 +698,30 @@ abstract class _PostAuthor implements PostAuthor {
   factory _PostAuthor.fromJson(Map<String, dynamic> json) =
       _$PostAuthorImpl.fromJson;
 
-  @override
-
   /// Author's public key (32-byte hex string)
-  String get pubkey;
   @override
+  String get pubkey;
 
   /// Display name (from kind:0 metadata, or truncated pubkey if not available)
-  String get displayName;
   @override
+  String get displayName;
 
   /// NIP-05 verification (e.g., alice@example.com)
-  String? get nip05;
   @override
+  String? get nip05;
 
   /// Profile picture URL
-  String? get picture;
   @override
+  String? get picture;
 
   /// About/bio text
-  String? get about;
   @override
-  @JsonKey(ignore: true)
+  String? get about;
+
+  /// Create a copy of PostAuthor
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
   _$$PostAuthorImplCopyWith<_$PostAuthorImpl> get copyWith =>
       throw _privateConstructorUsedError;
 }

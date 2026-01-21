@@ -7,11 +7,13 @@ abstract final class AppConstants {
   static const version = '0.1.0';
 
   /// Default relay list for new users.
+  /// Note: Primary list is kDefaultRelays in relay_constants.dart
   static const defaultRelays = [
     'wss://relay.damus.io',
-    'wss://relay.nostr.band',
     'wss://nos.lol',
     'wss://relay.snort.social',
+    'wss://relay.primal.net',
+    'wss://purplepag.es',
     'wss://nostr.wine',
   ];
 

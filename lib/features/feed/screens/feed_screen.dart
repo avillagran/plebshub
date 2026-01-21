@@ -24,6 +24,9 @@ class FeedScreen extends ConsumerStatefulWidget {
 class _FeedScreenState extends ConsumerState<FeedScreen> {
   final ScrollController _scrollController = ScrollController();
 
+  /// Track if widget is still mounted for async safety.
+  bool _mounted = true;
+
   /// Threshold for triggering load more (80% scroll position).
   static const double _loadMoreThreshold = 0.8;
 
@@ -46,6 +49,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     // Load appropriate feed based on auth state
     Future.microtask(() async {
       await _loadFeedForCurrentUser();
+      if (!_mounted) return;
       _fetchReactionsForLoadedPosts();
     });
   }
@@ -57,6 +61,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
   /// 2. Fetches new posts in background
   /// 3. Shows "X nuevos" button when new posts arrive
   Future<void> _loadFeedForCurrentUser() async {
+    if (!_mounted) return;
     final authState = ref.read(authProvider);
     if (authState is AuthStateAuthenticated) {
       // Load following feed for authenticated users
@@ -67,11 +72,12 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
       // Load global feed with cache-first strategy
       await ref.read(feedProvider.notifier).loadFeedCacheFirst();
     }
-    if (!mounted) return;
+    if (!_mounted) return;
   }
 
   /// Show new posts and scroll to top.
   void _showNewPostsAndScrollToTop() {
+    if (!_mounted) return;
     ref.read(feedProvider.notifier).showNewPosts();
     // Scroll to top with animation
     _scrollController.animateTo(
@@ -85,6 +91,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
 
   @override
   void dispose() {
+    _mounted = false;
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
@@ -105,6 +112,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
 
   /// Load more posts and fetch their reactions.
   Future<void> _loadMorePosts() async {
+    if (!_mounted) return;
     final feedState = ref.read(feedProvider);
     if (feedState is! FeedStateLoaded) return;
     if (feedState.isLoadingMore || !feedState.hasMore) return;
@@ -113,7 +121,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
     await ref.read(feedProvider.notifier).loadMore();
 
     // Check if widget is still mounted after async operation
-    if (!mounted) return;
+    if (!_mounted) return;
 
     // Fetch reactions for newly loaded posts
     final newState = ref.read(feedProvider);
@@ -130,6 +138,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
 
   /// Fetch reactions and reposts for all loaded posts.
   void _fetchReactionsForLoadedPosts() {
+    if (!_mounted) return;
     final feedState = ref.read(feedProvider);
     if (feedState is FeedStateLoaded) {
       final eventIds = feedState.posts.map((p) => p.id).toList();
@@ -142,8 +151,9 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
   }
 
   Future<void> _handleRefresh() async {
+    if (!_mounted) return;
     await ref.read(feedProvider.notifier).refresh();
-    if (!mounted) return;
+    if (!_mounted) return;
     _fetchReactionsForLoadedPosts();
   }
 
@@ -178,7 +188,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
       if ((previous is! AuthStateAuthenticated && next is AuthStateAuthenticated) ||
           (previous is AuthStateAuthenticated && next is! AuthStateAuthenticated)) {
         Future.microtask(() async {
-          if (!mounted) return;
+          if (!_mounted) return;
           if (next is AuthStateAuthenticated) {
             // User logged in - load following feed
             await ref.read(feedProvider.notifier).loadFollowingFeed(
@@ -189,7 +199,7 @@ class _FeedScreenState extends ConsumerState<FeedScreen> {
             ref.read(feedProvider.notifier).clearCurrentUser();
             await ref.read(feedProvider.notifier).loadGlobalFeed();
           }
-          if (!mounted) return;
+          if (!_mounted) return;
           _fetchReactionsForLoadedPosts();
         });
       }

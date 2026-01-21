@@ -122,6 +122,13 @@ class ColumnConfig with _$ColumnConfig {
       case ColumnType.hashtag:
         return hashtag != null ? '#$hashtag' : 'Hashtag';
       case ColumnType.user:
+        // Show truncated pubkey for user columns
+        if (userPubkey != null && userPubkey!.isNotEmpty) {
+          if (userPubkey!.startsWith('npub1')) {
+            return '@${userPubkey!.substring(0, 12)}...';
+          }
+          return '@${userPubkey!.substring(0, 8)}...';
+        }
         return 'User';
       case ColumnType.channel:
         return 'Channel';

@@ -22,7 +22,9 @@ mixin _$ColumnsState {
   /// Whether edit mode is active (for reordering/removing columns).
   bool get isEditMode => throw _privateConstructorUsedError;
 
-  @JsonKey(ignore: true)
+  /// Create a copy of ColumnsState
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
   $ColumnsStateCopyWith<ColumnsState> get copyWith =>
       throw _privateConstructorUsedError;
 }
@@ -46,6 +48,8 @@ class _$ColumnsStateCopyWithImpl<$Res, $Val extends ColumnsState>
   // ignore: unused_field
   final $Res Function($Val) _then;
 
+  /// Create a copy of ColumnsState
+  /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
   $Res call({
@@ -84,6 +88,8 @@ class __$$ColumnsStateImplCopyWithImpl<$Res>
       _$ColumnsStateImpl _value, $Res Function(_$ColumnsStateImpl) _then)
       : super(_value, _then);
 
+  /// Create a copy of ColumnsState
+  /// with the given fields replaced by the non-null parameter values.
   @pragma('vm:prefer-inline')
   @override
   $Res call({
@@ -155,7 +161,9 @@ class _$ColumnsStateImpl with DiagnosticableTreeMixin implements _ColumnsState {
   int get hashCode => Object.hash(
       runtimeType, const DeepCollectionEquality().hash(_columns), isEditMode);
 
-  @JsonKey(ignore: true)
+  /// Create a copy of ColumnsState
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
   @override
   @pragma('vm:prefer-inline')
   _$$ColumnsStateImplCopyWith<_$ColumnsStateImpl> get copyWith =>
@@ -167,16 +175,18 @@ abstract class _ColumnsState implements ColumnsState {
       {final List<ColumnConfig> columns,
       final bool isEditMode}) = _$ColumnsStateImpl;
 
-  @override
-
   /// List of column configurations in display order.
-  List<ColumnConfig> get columns;
   @override
+  List<ColumnConfig> get columns;
 
   /// Whether edit mode is active (for reordering/removing columns).
-  bool get isEditMode;
   @override
-  @JsonKey(ignore: true)
+  bool get isEditMode;
+
+  /// Create a copy of ColumnsState
+  /// with the given fields replaced by the non-null parameter values.
+  @override
+  @JsonKey(includeFromJson: false, includeToJson: false)
   _$$ColumnsStateImplCopyWith<_$ColumnsStateImpl> get copyWith =>
       throw _privateConstructorUsedError;
 }

@@ -124,6 +124,17 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
     _fetchReactionsForLoadedPosts();
   }
 
+  /// Show new posts and scroll to top.
+  void _showNewPostsAndScrollToTop() {
+    ref.read(exploreFeedProvider.notifier).showNewPosts();
+    _scrollController.animateTo(
+      0,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+    _fetchReactionsForLoadedPosts();
+  }
+
   /// Precache images for nearby posts.
   void _precacheNearbyImages(
       BuildContext context, int currentIndex, List<Post> posts) {
@@ -391,6 +402,7 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
         :final posts,
         :final isLoadingMore,
         :final hasMore,
+        :final newPostsCount,
       ) =>
         RefreshIndicator(
           onRefresh: _handleRefresh,
@@ -413,25 +425,62 @@ class _ExploreScreenState extends ConsumerState<ExploreScreen> {
               : ListView.builder(
                   controller: _scrollController,
                   padding: EdgeInsets.zero,
-                  itemCount:
-                      posts.length + (isLoadingMore ? 1 : (hasMore ? 1 : 0)),
+                  itemCount: posts.length +
+                      (newPostsCount > 0 ? 1 : 0) +
+                      (isLoadingMore ? 1 : (hasMore ? 1 : 0)),
                   itemBuilder: (context, index) {
-                    if (index >= posts.length) {
+                    // Show "X nuevos" button at the top when there are new posts
+                    if (newPostsCount > 0 && index == 0) {
+                      return _buildNewPostsButton(newPostsCount);
+                    }
+
+                    // Adjust index if we showed the new posts button
+                    final postIndex = newPostsCount > 0 ? index - 1 : index;
+
+                    // Show loading indicator at the bottom
+                    if (postIndex >= posts.length) {
                       return _buildLoadMoreIndicator(isLoadingMore, hasMore);
                     }
 
-                    _precacheNearbyImages(context, index, posts);
+                    _precacheNearbyImages(context, postIndex, posts);
 
-                    final post = posts[index];
+                    final post = posts[postIndex];
                     return PostCard(
                       post: post,
                       showDivider:
-                          index < posts.length - 1 || isLoadingMore || hasMore,
+                          postIndex < posts.length - 1 || isLoadingMore || hasMore,
                     );
                   },
                 ),
         ),
     };
+  }
+
+  Widget _buildNewPostsButton(int count) {
+    return GestureDetector(
+      onTap: _showNewPostsAndScrollToTop,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.primary.withValues(alpha: 0.1),
+          border: Border(
+            bottom: BorderSide(
+              color: AppColors.border,
+            ),
+          ),
+        ),
+        child: Center(
+          child: Text(
+            '$count nuevos',
+            style: AppTypography.labelMedium.copyWith(
+              color: AppColors.primary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildLoadMoreIndicator(bool isLoadingMore, bool hasMore) {

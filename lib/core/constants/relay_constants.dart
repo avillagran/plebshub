@@ -5,10 +5,10 @@
 const List<String> kDefaultRelays = [
   'wss://relay.damus.io',
   'wss://nos.lol',
-  'wss://relay.nostr.band',
-  'wss://nostr.wine',
   'wss://relay.snort.social',
   'wss://relay.primal.net',
+  'wss://purplepag.es',
+  'wss://nostr.wine',
 ];
 
 /// Minimum number of relays that should be connected

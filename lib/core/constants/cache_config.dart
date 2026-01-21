@@ -44,8 +44,10 @@ class CacheConfig {
 
   /// TTL for cached link previews.
   ///
-  /// Link preview metadata changes infrequently, so a longer TTL is acceptable.
-  static const Duration linkPreviewsTtl = Duration(hours: 6);
+  /// Link preview metadata (OpenGraph data) changes infrequently,
+  /// so a 24-hour TTL provides optimal performance while ensuring
+  /// eventual consistency for updated content.
+  static const Duration linkPreviewsTtl = Duration(hours: 24);
 
   /// Cache key prefixes for different data types.
   static const String feedKeyPrefix = 'feed_';
