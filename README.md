@@ -1,16 +1,27 @@
-# plebshub
+# 🚀 Introducing PlebsHub: The Ultimate Nostr Power-User Client
 
-A new Flutter project.
+The "Plebeian" way to navigate the protocol is here. Fast, multi-platform, and packed with features you’ve been waiting for.
 
-## Getting Started
+### 🔥 Features Now Live:
+* **Secure Login:** Native `nsec` support.
+* **Multi-Column Layout:** Optimized for desktop and large screens (power-user style).
+* **True Multi-platform:** Available on **Android, iOS, macOS, Linux, and Windows.**
+* **Pro Media Suite:** * Native YouTube player.
+    * **PlebsPlayer Integration:** Support for HDR/10+ and Dolby Vision.
+    * **Media Manager:** Robust uploads with real-time progress bars.
+* **NIP-28 Chat Channels:** Classic IRC-style communication on Nostr.
 
-This project is a starting point for a Flutter application.
+### 🛠️ The Roadmap (Coming Soon):
+* ⚡ **Zaps** & Integrated **Non-custodial BTC/LN Wallet**.
+* 💬 **BitChat Integration** (via `bitchat-flutter`).
+* ...and much more!
 
-A few resources to get you started if this is your first Flutter project:
+> Building the bridge between protocol complexity and daily usability.
+<p align="center">
+<img src="https://pbs.twimg.com/media/G_J__2RXQAAOBjF?format=jpg&name=large" width="24%">
+<img src="https://pbs.twimg.com/media/G_J__3oWEAAxaIy?format=jpg&name=large" width="24%">
+<img src="https://pbs.twimg.com/media/G_J__4XWgAA3smQ?format=jpg&name=large" width="24%">
+<img src="https://pbs.twimg.com/media/G_J__7NXMAAZwdJ?format=jpg&name=large" width="24%">
+</p>
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+#Nostr #PlebsHub #Bitcoin #OpenSource #BuildInPublic #NIP28 #Flutter
