@@ -1,61 +1,52 @@
-import 'package:isar/isar.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:plebshub/services/database/app_database.dart';
 
-import '../features/feed/models/nostr_event.dart';
-
-/// Singleton service for managing Isar database instance.
+/// Singleton service for managing Drift database instance.
 ///
-/// Provides centralized database access across the application with
-/// platform-appropriate directory resolution.
+/// Provides centralized database access across the application.
+/// The underlying AppDatabase handles platform-appropriate initialization.
 class DatabaseService {
   DatabaseService._();
 
   static final DatabaseService instance = DatabaseService._();
 
-  Isar? _isar;
+  AppDatabase? _db;
+  bool _isInitialized = false;
 
-  /// Get the current Isar instance.
+  /// Get the current database instance.
   ///
   /// Throws [StateError] if database has not been initialized.
-  Isar get isar {
-    if (_isar == null) {
+  AppDatabase get db {
+    if (_db == null) {
       throw StateError(
         'DatabaseService not initialized. Call initialize() first.',
       );
     }
-    return _isar!;
+    return _db!;
   }
 
   /// Check if database is initialized.
-  bool get isInitialized => _isar != null;
+  bool get isInitialized => _isInitialized;
 
-  /// Initialize the Isar database.
+  /// Initialize the Drift database.
   ///
-  /// Resolves platform-appropriate directory and opens Isar instance
-  /// with all registered schemas.
+  /// Creates the AppDatabase instance which handles platform-appropriate
+  /// initialization internally.
   ///
   /// Safe to call multiple times - will return existing instance if
   /// already initialized.
   Future<void> initialize() async {
-    if (_isar != null) {
-      return; // Already initialized
-    }
-
-    final dir = await getApplicationDocumentsDirectory();
-
-    _isar = await Isar.open(
-      [NostrEventSchema],
-      directory: dir.path,
-      name: 'plebshub',
-    );
+    if (_isInitialized) return;
+    _db = AppDatabase();
+    _isInitialized = true;
   }
 
   /// Close the database and release resources.
   ///
   /// Should be called when the app is shutting down.
   Future<void> close() async {
-    await _isar?.close();
-    _isar = null;
+    await _db?.close();
+    _db = null;
+    _isInitialized = false;
   }
 
   /// Dispose of the database instance.

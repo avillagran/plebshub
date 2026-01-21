@@ -3,14 +3,15 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:isar/isar.dart';
 import 'package:ndk/ndk.dart';
 
+import '../../../core/constants/cache_config.dart';
+import '../../../services/cache/cache_service.dart';
 import '../../../services/database_service.dart';
 import '../../../services/feed_service.dart';
 import '../../../services/ndk_service.dart';
 import '../../../services/thread_service.dart';
-import '../models/nostr_event.dart';
+import '../../../services/database/app_database.dart';
 import '../models/post.dart';
 
 /// Provider for the FeedNotifier.
@@ -19,7 +20,7 @@ import '../models/post.dart';
 /// - Loading the global feed (recent kind:1 notes)
 /// - Refreshing the feed
 /// - Converting NDK events to Post models
-/// - Caching events in Isar database
+/// - Caching events in Drift database
 /// - Pagination with lazy loading
 /// - Memory management with history limits
 ///
@@ -136,21 +137,33 @@ class FeedNotifier extends StateNotifier<FeedState> {
   final _dbService = DatabaseService.instance;
   final _threadService = ThreadService.instance;
   final _feedService = FeedService.instance;
+  final _cacheService = CacheService.instance;
 
   /// The current user's public key (set when loading following feed).
   String? _currentUserPubkey;
+
+  /// Cache key for unauthenticated global feed.
+  static const String _globalFeedCacheKey = '${CacheConfig.feedKeyPrefix}global';
+
+  /// Get cache key for authenticated user's home feed.
+  String _homeFeedCacheKey(String userPubkey) =>
+      '${CacheConfig.feedKeyPrefix}home_$userPubkey';
 
   /// Load the global feed (recent kind:1 notes).
   ///
   /// Fetches posts from the last 24 hours, up to [FeedConfig.initialLoadLimit].
   /// This is optimized for initial load - use [loadMore] for pagination.
+  ///
+  /// Note: Clears _currentUserPubkey to ensure global feed cache is used.
   Future<void> loadGlobalFeed() async {
+    // Clear user pubkey so cache uses global key
+    _currentUserPubkey = null;
+
     state = const FeedStateLoading();
 
     try {
       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final since = now - FeedConfig.initialTimeWindowSeconds;
-
 
       // Create filter for kind:1 (text notes) with time window
       final filter = Filter(
@@ -186,6 +199,9 @@ class FeedNotifier extends StateNotifier<FeedState> {
         hasMore: posts.length >= FeedConfig.paginationBatchSize,
         oldestTimestamp: oldestTimestamp,
       );
+
+      // Cache the loaded posts (global feed cache)
+      unawaited(_cacheToStorage(posts));
     } catch (e, stackTrace) {
       debugPrint('Error loading global feed: $e\n$stackTrace');
       state = FeedStateError(
@@ -197,18 +213,19 @@ class FeedNotifier extends StateNotifier<FeedState> {
   /// Load the following feed (posts from users the current user follows).
   ///
   /// Uses cache-first strategy:
-  /// 1. Immediately loads and displays cached posts from Isar database
+  /// 1. Immediately loads and displays cached posts from CacheService
   /// 2. Fetches new posts from relays in the background
   /// 3. New posts are stored as pending (not merged immediately)
   /// 4. UI shows "X nuevos" button when new posts arrive
   ///
+  /// Cache key: 'feed_home_{pubkey}' ensures each user gets their own cache.
   /// Falls back to loading state if no cache exists.
   Future<void> loadFollowingFeed({required String userPubkey}) async {
     _currentUserPubkey = userPubkey;
 
     try {
-
       // Step 1: Load cached posts FIRST (before any network call)
+      // Cache key is based on userPubkey via _homeFeedCacheKey
       final cachedPosts = await _loadFromCache();
 
       if (cachedPosts.isNotEmpty) {
@@ -228,6 +245,8 @@ class FeedNotifier extends StateNotifier<FeedState> {
       } else {
         // No cache - show loading state and wait for network
         state = const FeedStateLoading();
+
+        List<Post>? loadedPosts;
 
         // Listen to the stream and update state with each batch
         await for (final batch in _feedService.streamFollowingFeed(
@@ -250,8 +269,11 @@ class FeedNotifier extends StateNotifier<FeedState> {
             oldestTimestamp: oldestTimestamp,
           );
 
-          // If batch is complete, we're done
-          if (batch.isComplete) break;
+          // If batch is complete, cache and we're done
+          if (batch.isComplete) {
+            loadedPosts = posts;
+            break;
+          }
         }
 
         // If no posts were loaded, show empty state
@@ -260,6 +282,11 @@ class FeedNotifier extends StateNotifier<FeedState> {
             posts: [],
             hasMore: false,
           );
+        }
+
+        // Cache the loaded posts (following feed cache)
+        if (loadedPosts != null && loadedPosts.isNotEmpty) {
+          unawaited(_cacheToStorage(loadedPosts));
         }
       }
     } catch (e, stackTrace) {
@@ -381,6 +408,9 @@ class FeedNotifier extends StateNotifier<FeedState> {
         hasMore: newPosts.length >= FeedConfig.paginationBatchSize,
         oldestTimestamp: newOldestTimestamp,
       );
+
+      // Cache the combined posts in background
+      unawaited(_cacheToStorage(combinedPosts));
     } catch (e) {
       debugPrint('Error loading more posts: $e');
       // Revert to previous state without loading indicator
@@ -437,37 +467,78 @@ class FeedNotifier extends StateNotifier<FeedState> {
     }
   }
 
-  /// Load posts from local database cache.
+  /// Load posts from cache using CacheService.
   ///
-  /// Uses indexed queries for fast cache retrieval:
-  /// - Filters by kind:1 (text notes) using index
-  /// - Filters by createdAt using index
-  /// - Sorts by createdAt descending (newest first) using index
-  /// - Limits results to avoid loading entire database
+  /// Uses auth-aware cache keys:
+  /// - Unauthenticated: 'feed_global' key
+  /// - Authenticated: 'feed_home_{pubkey}' key
+  ///
+  /// This ensures users see the correct cached feed based on their auth state.
+  ///
+  /// For large caches (>50 posts), JSON deserialization is performed in an
+  /// isolate via compute() to avoid blocking the main thread.
   Future<List<Post>> _loadFromCache() async {
+    if (!_cacheService.isInitialized) {
+      return [];
+    }
+
     try {
-      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-      final since = now - FeedConfig.initialTimeWindowSeconds;
+      // Use different cache key based on auth state
+      final cacheKey = _currentUserPubkey != null
+          ? _homeFeedCacheKey(_currentUserPubkey!)
+          : _globalFeedCacheKey;
 
-      // Use indexed query for efficient cache retrieval
-      // Query: kind == 1 AND createdAt > since, sorted by createdAt DESC, limit N
-      final cachedEvents = await _dbService.isar.nostrEvents
-          .filter()
-          .kindEqualTo(1)
-          .createdAtGreaterThan(since)
-          .sortByCreatedAtDesc()
-          .limit(FeedConfig.initialLoadLimit)
-          .findAll();
+      final cached = await _cacheService.get<List<dynamic>>(
+        cacheKey,
+        allowStale: true, // Show stale data while refreshing
+      );
 
-      if (cachedEvents.isEmpty) {
-        return [];
+      if (cached != null && cached.isNotEmpty) {
+        // Use isolate for large caches to avoid blocking UI
+        List<Post> posts;
+        if (cached.length > 50) {
+          posts = await compute(_parsePostsFromJson, cached);
+        } else {
+          posts = _parsePostsFromJson(cached);
+        }
+
+        // Sort by creation time (newest first)
+        posts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+        return posts;
       }
-
-      // Convert to Posts (already sorted by query)
-      return cachedEvents.map(_convertToPost).toList();
     } catch (e) {
       debugPrint('Error loading from cache: $e');
-      return [];
+    }
+
+    return [];
+  }
+
+  /// Cache posts to storage using CacheService.
+  ///
+  /// Uses auth-aware cache keys to store posts for the correct feed type.
+  Future<void> _cacheToStorage(List<Post> posts) async {
+    if (!_cacheService.isInitialized) {
+      return;
+    }
+
+    try {
+      // Use different cache key based on auth state
+      final cacheKey = _currentUserPubkey != null
+          ? _homeFeedCacheKey(_currentUserPubkey!)
+          : _globalFeedCacheKey;
+
+      // Only cache the most recent posts to avoid bloat
+      final postsToCache = posts.take(FeedConfig.maxPostsInMemory).toList();
+      final jsonList = postsToCache.map((post) => post.toJson()).toList();
+
+      await _cacheService.set(
+        cacheKey,
+        jsonList,
+        CacheConfig.postsTtl,
+      );
+    } catch (e) {
+      debugPrint('Error caching posts: $e');
     }
   }
 
@@ -527,6 +598,10 @@ class FeedNotifier extends StateNotifier<FeedState> {
             pendingPosts: newPosts,
           );
         }
+        // Cache the merged posts (existing + new)
+        final mergedPosts = [...afterFetchState.posts, ...newPosts];
+        mergedPosts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        await _cacheToStorage(mergedPosts);
       } else if (afterFetchState is FeedStateLoading) {
         // We had no cache - show all posts directly
         allPosts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -540,6 +615,9 @@ class FeedNotifier extends StateNotifier<FeedState> {
           hasMore: allPosts.length >= FeedConfig.paginationBatchSize,
           oldestTimestamp: oldestTimestamp,
         );
+
+        // Cache the loaded posts
+        await _cacheToStorage(allPosts);
       }
     } catch (e, stackTrace) {
       debugPrint('Error fetching new posts: $e\n$stackTrace');
@@ -584,11 +662,14 @@ class FeedNotifier extends StateNotifier<FeedState> {
       newPostsCount: 0,
       oldestTimestamp: oldestTimestamp,
     );
+
+    // Cache the merged posts in background
+    unawaited(_cacheToStorage(finalPosts));
   }
 
   /// Save NDK events to the database (non-blocking).
   ///
-  /// Converts [Nip01Event] objects to [NostrEvent] and stores them in Isar.
+  /// Converts [Nip01Event] objects to [NostrEvent] and stores them in Drift.
   /// Returns the list of posts parsed in isolate for immediate use.
   Future<List<Post>> _saveEventsToDatabase(
     List<Nip01Event> ndkEvents,
@@ -611,112 +692,24 @@ class FeedNotifier extends StateNotifier<FeedState> {
 
     // Save to database in background - don't block UI
     Future(() async {
-      final nostrEvents = <NostrEvent>[];
-
       for (final ndkEvent in ndkEvents) {
         try {
-          final nostrEvent = NostrEvent(
+          await _dbService.db.upsertNostrEvent(NostrEventEntry(
             id: ndkEvent.id,
             pubkey: ndkEvent.pubKey,
             createdAt: ndkEvent.createdAt,
             kind: ndkEvent.kind,
             content: ndkEvent.content,
-            tags: ndkEvent.tags.map((tag) => jsonEncode(tag)).toList(),
+            tags: jsonEncode(ndkEvent.tags),
             sig: ndkEvent.sig,
-          );
-          nostrEvents.add(nostrEvent);
+          ));
         } catch (e) {
-          // Error converting event - skip
-        }
-      }
-
-      if (nostrEvents.isNotEmpty) {
-        try {
-          await _dbService.isar.writeTxn(() async {
-            await _dbService.isar.nostrEvents.putAll(nostrEvents);
-          });
-        } catch (e) {
-          // Error saving events - ignore
+          // Error saving event - skip
         }
       }
     });
 
     return posts;
-  }
-
-  /// Convert a [NostrEvent] to a [Post] model.
-  ///
-  /// DEPRECATED: Use _parseEventsIsolate for non-blocking parsing.
-  /// Kept for backwards compatibility.
-  Post _convertToPost(NostrEvent event) {
-    // Extract reply and root event IDs from tags
-    String? replyToId;
-    String? rootEventId;
-    String? replyToAuthorPubkey;
-
-    // First pass: extract event references
-    for (final tagJson in event.tags) {
-      try {
-        final tag = jsonDecode(tagJson) as List;
-        if (tag.isNotEmpty && tag[0] == 'e') {
-          // 'e' tag references another event
-          if (tag.length > 3) {
-            // NIP-10 format: ["e", <event-id>, <relay-url>, <marker>]
-            final marker = tag[3] as String?;
-            if (marker == 'reply') {
-              replyToId = tag[1] as String;
-            } else if (marker == 'root') {
-              rootEventId = tag[1] as String;
-            }
-          } else if (replyToId == null) {
-            // Fallback: first 'e' tag is reply-to
-            replyToId = tag[1] as String;
-          }
-        }
-      } catch (e) {
-        // Skip invalid tags
-      }
-    }
-
-    // Second pass: extract author pubkey from p tags
-    for (final tagJson in event.tags) {
-      try {
-        final tag = jsonDecode(tagJson) as List;
-        if (tag.isNotEmpty && tag[0] == 'p') {
-          final pubkey = tag[1] as String;
-          // Check for marker-based p tag (NIP-10 preferred)
-          if (tag.length > 3) {
-            final marker = tag[3] as String?;
-            if (marker == 'reply') {
-              replyToAuthorPubkey = pubkey;
-              break;
-            }
-          }
-          // Fallback: first p tag is likely the reply-to author
-          replyToAuthorPubkey ??= pubkey;
-        }
-      } catch (e) {
-        // Skip invalid tags
-      }
-    }
-
-    // Create author (using truncated pubkey as display name for now)
-    final author = PostAuthor(
-      pubkey: event.pubkey,
-      displayName: _truncatePubkey(event.pubkey),
-    );
-
-    return Post(
-      id: event.id,
-      author: author,
-      content: event.content,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(
-        event.createdAt * 1000,
-      ),
-      replyToId: replyToId,
-      rootEventId: rootEventId,
-      replyToAuthorPubkey: replyToAuthorPubkey,
-    );
   }
 
   /// Truncate a pubkey for display.
@@ -764,6 +757,16 @@ class FeedNotifier extends StateNotifier<FeedState> {
       return false;
     }
   }
+}
+
+/// Top-level function for parsing cached posts JSON in isolate.
+///
+/// Must be a top-level function (not a method or closure) for `compute()`.
+/// Used by _loadFromCache() for large caches (>50 posts) to avoid blocking UI.
+List<Post> _parsePostsFromJson(List<dynamic> jsonList) {
+  return jsonList
+      .map((json) => Post.fromJson(json as Map<String, dynamic>))
+      .toList();
 }
 
 /// Top-level function for parsing events in isolate.

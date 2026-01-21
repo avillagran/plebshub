@@ -15,56 +15,46 @@ import '../../../services/database/app_database.dart';
 import '../models/post.dart';
 import 'feed_provider.dart';
 
-/// Provider for the ExploreFeedNotifier.
+/// Provider for a hashtag feed.
 ///
-/// This provider manages the global explore feed state (all public posts)
-/// and provides methods for:
-/// - Loading the global feed (recent kind:1 notes from anyone)
-/// - Refreshing the feed
-/// - Converting NDK events to Post models
-/// - Caching events in Drift database
-/// - Pagination with lazy loading
-/// - Memory management with history limits
-/// - Smart caching with stale-while-revalidate pattern
+/// This is a family provider that creates a separate feed instance for each hashtag.
+/// Each hashtag feed manages its own state independently.
 ///
 /// Example:
 /// ```dart
 /// // In a widget
-/// final feedState = ref.watch(exploreFeedProvider);
+/// final feedState = ref.watch(hashtagFeedProvider('bitcoin'));
 ///
-/// // Load global feed
-/// ref.read(exploreFeedProvider.notifier).loadGlobalFeed();
+/// // Load feed for the hashtag
+/// ref.read(hashtagFeedProvider('bitcoin').notifier).loadFeed();
 ///
-/// // Load more posts (pagination)
-/// ref.read(exploreFeedProvider.notifier).loadMore();
-///
-/// // Refresh feed
-/// ref.read(exploreFeedProvider.notifier).refresh();
+/// // Refresh
+/// ref.read(hashtagFeedProvider('bitcoin').notifier).refresh();
 /// ```
-final exploreFeedProvider =
-    StateNotifierProvider<ExploreFeedNotifier, ExploreFeedState>((ref) {
-  return ExploreFeedNotifier();
+final hashtagFeedProvider = StateNotifierProvider.family<HashtagFeedNotifier,
+    HashtagFeedState, String>((ref, hashtag) {
+  return HashtagFeedNotifier(hashtag: hashtag);
 });
 
-/// State for the explore feed.
+/// State for a hashtag feed.
 @immutable
-sealed class ExploreFeedState {
-  const ExploreFeedState();
+sealed class HashtagFeedState {
+  const HashtagFeedState();
 }
 
 /// Initial state - no data loaded yet
-class ExploreFeedStateInitial extends ExploreFeedState {
-  const ExploreFeedStateInitial();
+class HashtagFeedStateInitial extends HashtagFeedState {
+  const HashtagFeedStateInitial();
 }
 
 /// Loading state - fetching data from relays
-class ExploreFeedStateLoading extends ExploreFeedState {
-  const ExploreFeedStateLoading();
+class HashtagFeedStateLoading extends HashtagFeedState {
+  const HashtagFeedStateLoading();
 }
 
 /// Loaded state - feed data available
-class ExploreFeedStateLoaded extends ExploreFeedState {
-  const ExploreFeedStateLoaded({
+class HashtagFeedStateLoaded extends HashtagFeedState {
+  const HashtagFeedStateLoaded({
     required this.posts,
     this.isLoadingMore = false,
     this.hasMore = true,
@@ -95,7 +85,7 @@ class ExploreFeedStateLoaded extends ExploreFeedState {
   final List<Post> pendingPosts;
 
   /// Create a copy with updated fields.
-  ExploreFeedStateLoaded copyWith({
+  HashtagFeedStateLoaded copyWith({
     List<Post>? posts,
     bool? isLoadingMore,
     bool? hasMore,
@@ -104,7 +94,7 @@ class ExploreFeedStateLoaded extends ExploreFeedState {
     int? newPostsCount,
     List<Post>? pendingPosts,
   }) {
-    return ExploreFeedStateLoaded(
+    return HashtagFeedStateLoaded(
       posts: posts ?? this.posts,
       isLoadingMore: isLoadingMore ?? this.isLoadingMore,
       hasMore: hasMore ?? this.hasMore,
@@ -118,25 +108,29 @@ class ExploreFeedStateLoaded extends ExploreFeedState {
 }
 
 /// Error state - something went wrong
-class ExploreFeedStateError extends ExploreFeedState {
-  const ExploreFeedStateError({required this.message});
+class HashtagFeedStateError extends HashtagFeedState {
+  const HashtagFeedStateError({required this.message});
 
   final String message;
 }
 
-/// Notifier for managing explore feed state.
-class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
-  ExploreFeedNotifier() : super(const ExploreFeedStateInitial());
+/// Notifier for managing hashtag feed state.
+class HashtagFeedNotifier extends StateNotifier<HashtagFeedState> {
+  HashtagFeedNotifier({required this.hashtag})
+      : super(const HashtagFeedStateInitial());
+
+  /// The hashtag this feed is for (without # prefix).
+  final String hashtag;
 
   final _ndkService = NdkService.instance;
   final _dbService = DatabaseService.instance;
   final _cacheService = CacheService.instance;
   final _profileService = ProfileService.instance;
 
-  /// Cache key for the global explore feed.
-  static const String _feedCacheKey = '${CacheConfig.feedKeyPrefix}explore';
+  /// Cache key for this hashtag feed.
+  String get _feedCacheKey => '${CacheConfig.feedKeyPrefix}hashtag_$hashtag';
 
-  /// Load the global feed with cache-first pattern.
+  /// Load the hashtag feed with cache-first pattern.
   ///
   /// 1. Immediately shows cached posts if available (no loading spinner)
   /// 2. Fetches fresh posts in background (fire-and-forget)
@@ -144,7 +138,7 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
   /// 4. UI shows "X nuevos" button when new posts arrive
   ///
   /// If no cache exists, shows loading state and waits for network.
-  Future<void> loadGlobalFeed() async {
+  Future<void> loadFeed() async {
     // Step 1: Try to show cached data immediately
     final hasCached = await _loadFromCache();
 
@@ -153,22 +147,21 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
       unawaited(_fetchFreshPostsInBackground());
     } else {
       // No cache, show loading state and wait for network
-      state = const ExploreFeedStateLoading();
+      state = const HashtagFeedStateLoading();
       await _fetchFreshPostsInBackground();
     }
   }
 
   /// Fetch fresh posts from relays in background.
   ///
-  /// This method fetches posts without blocking the UI. New posts are
-  /// stored as pending and shown via "X nuevos" button when cache exists.
+  /// Queries for kind:1 events with 't' tag matching the hashtag.
   Future<void> _fetchFreshPostsInBackground() async {
     try {
       final currentState = state;
       final existingIds = <String>{};
 
       // Collect IDs of posts already displayed
-      if (currentState is ExploreFeedStateLoaded) {
+      if (currentState is HashtagFeedStateLoaded) {
         existingIds.addAll(currentState.posts.map((p) => p.id));
         existingIds.addAll(currentState.pendingPosts.map((p) => p.id));
       }
@@ -176,11 +169,13 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final since = now - FeedConfig.initialTimeWindowSeconds;
 
-      // Create filter for kind:1 (text notes) with time window - no author filter
+      // Create filter for kind:1 (text notes) with 't' tag matching hashtag
+      // NIP-12: Generic tag queries using #<single-letter> format
       final filter = Filter(
         kinds: [1], // kind:1 = text notes
         since: since,
         limit: FeedConfig.initialLoadLimit,
+        tTags: [hashtag.toLowerCase()], // 't' tag for hashtags
       );
 
       // Fetch events from relays
@@ -188,8 +183,8 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
 
       if (ndkEvents.isEmpty) {
         // If we were loading (no cache), show empty state
-        if (state is ExploreFeedStateLoading) {
-          state = const ExploreFeedStateLoaded(
+        if (state is HashtagFeedStateLoading) {
+          state = const HashtagFeedStateLoaded(
             posts: [],
             hasMore: false,
           );
@@ -204,7 +199,7 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
       allPosts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
       final afterFetchState = state;
-      if (afterFetchState is ExploreFeedStateLoaded) {
+      if (afterFetchState is HashtagFeedStateLoaded) {
         // Filter to only new posts (not already displayed)
         final newPosts = allPosts
             .where((post) => !existingIds.contains(post.id))
@@ -234,13 +229,13 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
         );
         mergedPosts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
         await _cacheToStorage(mergedPosts);
-      } else if (afterFetchState is ExploreFeedStateLoading) {
+      } else if (afterFetchState is HashtagFeedStateLoading) {
         // We had no cache - show all posts directly
         final oldestTimestamp = allPosts.isNotEmpty
             ? allPosts.last.createdAt.millisecondsSinceEpoch ~/ 1000
             : null;
 
-        state = ExploreFeedStateLoaded(
+        state = HashtagFeedStateLoaded(
           posts: allPosts,
           hasMore: allPosts.length >= FeedConfig.paginationBatchSize,
           oldestTimestamp: oldestTimestamp,
@@ -253,16 +248,14 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
         await _cacheToStorage(allPosts);
       }
     } catch (e) {
-      // debugPrint('Error fetching explore feed: $e');
-
       // If we were loading (no cache), show error
-      if (state is ExploreFeedStateLoading) {
-        state = ExploreFeedStateError(
-          message: 'Failed to load feed: $e',
+      if (state is HashtagFeedStateLoading) {
+        state = HashtagFeedStateError(
+          message: 'Failed to load #$hashtag feed: $e',
         );
-      } else if (state is ExploreFeedStateLoaded) {
+      } else if (state is HashtagFeedStateLoaded) {
         // Keep showing cached content, just clear refreshing flag
-        state = (state as ExploreFeedStateLoaded).copyWith(
+        state = (state as HashtagFeedStateLoaded).copyWith(
           isRefreshingInBackground: false,
         );
       }
@@ -274,7 +267,7 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
   /// Called when user taps the "X nuevos" button.
   void showNewPosts() {
     final currentState = state;
-    if (currentState is! ExploreFeedStateLoaded) return;
+    if (currentState is! HashtagFeedStateLoaded) return;
     if (currentState.pendingPosts.isEmpty) return;
 
     // Merge pending posts at the top
@@ -314,9 +307,6 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
   /// Load posts from cache.
   ///
   /// Returns true if cached data was loaded, false otherwise.
-  ///
-  /// For large caches (>50 posts), JSON deserialization is performed in an
-  /// isolate via compute() to avoid blocking the main thread.
   Future<bool> _loadFromCache() async {
     if (!_cacheService.isInitialized) {
       return false;
@@ -329,13 +319,9 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
       );
 
       if (cached != null && cached.isNotEmpty) {
-        // Use isolate for large caches to avoid blocking UI
-        List<Post> posts;
-        if (cached.length > 50) {
-          posts = await compute(_parsePostsFromJson, cached);
-        } else {
-          posts = _parsePostsFromJson(cached);
-        }
+        final posts = cached
+            .map((json) => Post.fromJson(json as Map<String, dynamic>))
+            .toList();
 
         // Sort by creation time (newest first)
         posts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -344,10 +330,8 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
             ? posts.last.createdAt.millisecondsSinceEpoch ~/ 1000
             : null;
 
-        // debugPrint('Loaded ${posts.length} explore posts from cache');
-
         // Show cached posts immediately (no loading spinner)
-        state = ExploreFeedStateLoaded(
+        state = HashtagFeedStateLoaded(
           posts: posts,
           hasMore: true,
           oldestTimestamp: oldestTimestamp,
@@ -359,7 +343,7 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
         return true;
       }
     } catch (e) {
-      // debugPrint('Error loading explore feed from cache: $e');
+      // Error loading from cache
     }
 
     return false;
@@ -381,28 +365,22 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
         jsonList,
         CacheConfig.postsTtl,
       );
-
-      // debugPrint('Cached ${postsToCache.length} explore posts');
     } catch (e) {
-      // debugPrint('Error caching explore posts: $e');
+      // Error caching posts
     }
   }
 
   /// Merge and deduplicate two lists of posts.
-  ///
-  /// New posts take precedence over existing ones (in case of updates).
   List<Post> _mergeAndDeduplicate(
     List<Post> existing,
     List<Post> fresh,
   ) {
     final postMap = <String, Post>{};
 
-    // Add existing posts first
     for (final post in existing) {
       postMap[post.id] = post;
     }
 
-    // Add fresh posts (overwriting any duplicates)
     for (final post in fresh) {
       postMap[post.id] = post;
     }
@@ -411,15 +389,11 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
   }
 
   /// Load more posts (pagination).
-  ///
-  /// Fetches older posts before [oldestTimestamp] from the current state.
-  /// Posts are appended to the existing list, with a maximum of
-  /// [FeedConfig.maxPostsInMemory] posts kept in memory.
   Future<void> loadMore() async {
     final currentState = state;
 
     // Only load more if in loaded state and not already loading
-    if (currentState is! ExploreFeedStateLoaded) return;
+    if (currentState is! HashtagFeedStateLoaded) return;
     if (currentState.isLoadingMore) return;
     if (!currentState.hasMore) return;
 
@@ -430,24 +404,18 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
     state = currentState.copyWith(isLoadingMore: true);
 
     try {
-      // debugPrint(
-      //   'Loading more explore posts (until: '
-      //   '${DateTime.fromMillisecondsSinceEpoch(until * 1000)}, '
-      //   'limit: ${FeedConfig.paginationBatchSize})...',
-      // );
-
-      // Create filter for older posts - no author filter
+      // Create filter for older posts with 't' tag matching hashtag
       final filter = Filter(
         kinds: [1], // kind:1 = text notes
         until: until - 1, // Exclude the oldest post we already have
         limit: FeedConfig.paginationBatchSize,
+        tTags: [hashtag.toLowerCase()],
       );
 
       // Fetch events from relays
       final ndkEvents = await _ndkService.fetchEvents(filter: filter);
 
       if (ndkEvents.isEmpty) {
-        // debugPrint('No more explore posts available');
         state = currentState.copyWith(
           isLoadingMore: false,
           hasMore: false,
@@ -469,10 +437,6 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
 
       // Enforce memory limit - discard oldest posts if exceeded
       if (combinedPosts.length > FeedConfig.maxPostsInMemory) {
-        // debugPrint(
-        //   'Trimming explore posts from ${combinedPosts.length} '
-        //   'to ${FeedConfig.maxPostsInMemory}',
-        // );
         combinedPosts = combinedPosts.sublist(0, FeedConfig.maxPostsInMemory);
       }
 
@@ -481,9 +445,7 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
           ? combinedPosts.last.createdAt.millisecondsSinceEpoch ~/ 1000
           : null;
 
-      // debugPrint(
-      //     'Loaded ${newPosts.length} more explore posts, total: ${combinedPosts.length}');
-      state = ExploreFeedStateLoaded(
+      state = HashtagFeedStateLoaded(
         posts: combinedPosts,
         isLoadingMore: false,
         hasMore: newPosts.length >= FeedConfig.paginationBatchSize,
@@ -496,21 +458,15 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
       // Update cache with new posts
       await _cacheToStorage(combinedPosts);
     } catch (e) {
-      // debugPrint('Error loading more explore posts: $e');
       // Revert to previous state without loading indicator
       state = currentState.copyWith(isLoadingMore: false);
     }
   }
 
   /// Refresh the feed.
-  ///
-  /// Resets to the latest posts, clearing any pagination state.
-  Future<void> refresh() => loadGlobalFeed();
+  Future<void> refresh() => loadFeed();
 
   /// Save NDK events to the database (non-blocking).
-  ///
-  /// Converts [Nip01Event] objects to [NostrEvent] and stores them in Drift.
-  /// Returns the list of posts parsed in isolate for immediate use.
   Future<List<Post>> _saveEventsToDatabase(
     List<Nip01Event> ndkEvents,
   ) async {
@@ -552,51 +508,20 @@ class ExploreFeedNotifier extends StateNotifier<ExploreFeedState> {
     return posts;
   }
 
-  /// Truncate a pubkey for display.
-  ///
-  /// Returns the first 8 and last 4 characters of the pubkey.
-  /// Example: "npub1abc...xyz"
-  String _truncatePubkey(String pubkey) {
-    if (pubkey.length <= 12) {
-      return pubkey;
-    }
-    return '${pubkey.substring(0, 8)}...${pubkey.substring(pubkey.length - 4)}';
-  }
-
   /// Batch-load author profiles in background.
-  ///
-  /// This is fire-and-forget - profiles are fetched asynchronously
-  /// and cached. When they arrive, the ProfileCacheProvider is notified
-  /// and reactive widgets (ProfileName, ProfileAvatar) auto-update.
   void _batchLoadProfilesInBackground(List<Post> posts) {
     if (posts.isEmpty) return;
 
-    // Extract unique author pubkeys
     final pubkeys = posts.map((p) => p.author.pubkey).toSet().toList();
-
-    // debugPrint('Batch loading ${pubkeys.length} profiles in background...');
 
     // Fire and forget - don't await
     unawaited(_profileService.fetchProfiles(pubkeys).catchError((Object e) {
-      // debugPrint('Error batch loading profiles: $e');
-      return <String, Profile>{}; // Return empty map to satisfy type
+      return <String, Profile>{};
     }));
   }
 }
 
-/// Top-level function for parsing cached posts JSON in isolate.
-///
-/// Must be a top-level function (not a method or closure) for `compute()`.
-/// Used by _loadFromCache() for large caches (>50 posts) to avoid blocking UI.
-List<Post> _parsePostsFromJson(List<dynamic> jsonList) {
-  return jsonList
-      .map((json) => Post.fromJson(json as Map<String, dynamic>))
-      .toList();
-}
-
 /// Top-level function for parsing events in isolate.
-///
-/// Must be a top-level function (not a method or closure) for `compute()`.
 List<Post> _parseEventsIsolate(List<Map<String, dynamic>> rawEvents) {
   final posts = <Post>[];
 

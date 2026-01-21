@@ -1,14 +1,12 @@
 import 'dart:convert';
 
-import 'package:isar/isar.dart';
-import 'package:path_provider/path_provider.dart';
-
-import 'cache_entry.dart';
+import '../database/app_database.dart';
+import '../database_service.dart';
 
 /// Service for managing application cache with TTL support.
 ///
 /// Provides a generic caching mechanism that:
-/// - Persists to Isar database for survival across app restarts
+/// - Persists to Drift database for survival across app restarts
 /// - Supports TTL (time-to-live) for automatic expiration
 /// - Enables stale-while-revalidate pattern for instant loading
 /// - Includes cleanup methods to prevent storage bloat
@@ -36,33 +34,30 @@ class CacheService {
   /// Singleton instance of CacheService.
   static CacheService get instance => _instance;
 
-  Isar? _isar;
+  bool _isInitialized = false;
 
-  /// In-memory cache for quick access (avoids Isar reads for hot data).
+  /// In-memory cache for quick access (avoids database reads for hot data).
   final Map<String, _MemoryCacheEntry> _memoryCache = {};
 
   /// Maximum number of items to keep in memory cache.
   static const int _maxMemoryCacheSize = 100;
 
   /// Check if the cache service is initialized.
-  bool get isInitialized => _isar != null;
+  bool get isInitialized => _isInitialized;
+
+  /// Get the shared database instance from DatabaseService.
+  AppDatabase get _db => DatabaseService.instance.db;
 
   /// Initialize the cache service.
   ///
-  /// Opens a separate Isar instance for cache data. This is separate from
-  /// the main database to allow independent lifecycle management.
+  /// Uses the shared Drift database instance from DatabaseService.
+  /// DatabaseService must be initialized before calling this method.
   Future<void> initialize() async {
-    if (_isar != null) {
+    if (_isInitialized) {
       return; // Already initialized
     }
 
-    final dir = await getApplicationDocumentsDirectory();
-
-    _isar = await Isar.open(
-      [CacheEntrySchema],
-      directory: dir.path,
-      name: 'plebshub_cache',
-    );
+    _isInitialized = true;
   }
 
   /// Get a cached value by key.
@@ -86,15 +81,16 @@ class CacheService {
       }
     }
 
-    // Check Isar cache
-    final entry = await _isar?.cacheEntrys.where().keyEqualTo(key).findFirst();
+    // Check Drift cache
+    final entry = await _db.getCacheEntry(key);
 
     if (entry == null) {
       return null;
     }
 
     // Check if expired
-    if (entry.isExpired && !allowStale) {
+    final isExpired = DateTime.now().millisecondsSinceEpoch > entry.expiresAt;
+    if (isExpired && !allowStale) {
       return null;
     }
 
@@ -123,8 +119,8 @@ class CacheService {
     // Update memory cache
     _addToMemoryCache(key, data, expiresAt);
 
-    // Update Isar cache
-    final entry = CacheEntry(
+    // Update Drift cache
+    final entry = CacheEntryRow(
       key: key,
       data: data,
       cachedAt: now,
@@ -132,9 +128,7 @@ class CacheService {
       dataType: T.toString(),
     );
 
-    await _isar?.writeTxn(() async {
-      await _isar?.cacheEntrys.put(entry);
-    });
+    await _db.upsertCacheEntry(entry);
   }
 
   /// Check if a cache entry is stale (expired but still usable).
@@ -148,9 +142,12 @@ class CacheService {
       return memoryCached.isExpired;
     }
 
-    // Check Isar cache
-    final entry = await _isar?.cacheEntrys.where().keyEqualTo(key).findFirst();
-    return entry?.isStale ?? false;
+    // Check Drift cache
+    final entry = await _db.getCacheEntry(key);
+    if (entry == null) {
+      return false;
+    }
+    return DateTime.now().millisecondsSinceEpoch > entry.expiresAt;
   }
 
   /// Check if a cache entry exists (regardless of freshness).
@@ -159,7 +156,7 @@ class CacheService {
       return true;
     }
 
-    final entry = await _isar?.cacheEntrys.where().keyEqualTo(key).findFirst();
+    final entry = await _db.getCacheEntry(key);
     return entry != null;
   }
 
@@ -167,9 +164,7 @@ class CacheService {
   Future<void> remove(String key) async {
     _memoryCache.remove(key);
 
-    await _isar?.writeTxn(() async {
-      await _isar?.cacheEntrys.where().keyEqualTo(key).deleteAll();
-    });
+    await _db.deleteCacheEntry(key);
   }
 
   /// Remove all cache entries matching a prefix.
@@ -180,18 +175,8 @@ class CacheService {
     // Clear from memory cache
     _memoryCache.removeWhere((key, _) => key.startsWith(prefix));
 
-    // Clear from Isar
-    var count = 0;
-    await _isar?.writeTxn(() async {
-      final entries = await _isar?.cacheEntrys
-          .filter()
-          .keyStartsWith(prefix)
-          .findAll();
-      if (entries != null) {
-        count = entries.length;
-        await _isar?.cacheEntrys.deleteAll(entries.map((e) => e.isarId).toList());
-      }
-    });
+    // Clear from Drift
+    final count = await _db.deleteCacheEntriesByPrefix(prefix) ?? 0;
 
     return count;
   }
@@ -200,9 +185,7 @@ class CacheService {
   Future<void> clear() async {
     _memoryCache.clear();
 
-    await _isar?.writeTxn(() async {
-      await _isar?.cacheEntrys.clear();
-    });
+    await _db.clearCache();
   }
 
   /// Clear cache entries older than the specified duration.
@@ -215,18 +198,8 @@ class CacheService {
     // Clear from memory cache
     _memoryCache.removeWhere((_, entry) => entry.cachedAt < cutoff);
 
-    // Clear from Isar
-    var count = 0;
-    await _isar?.writeTxn(() async {
-      final entries = await _isar?.cacheEntrys
-          .filter()
-          .cachedAtLessThan(cutoff)
-          .findAll();
-      if (entries != null) {
-        count = entries.length;
-        await _isar?.cacheEntrys.deleteAll(entries.map((e) => e.isarId).toList());
-      }
-    });
+    // Clear from Drift
+    final count = await _db.deleteCacheEntriesOlderThan(cutoff) ?? 0;
 
     return count;
   }
@@ -240,29 +213,27 @@ class CacheService {
     // Clear from memory cache
     _memoryCache.removeWhere((_, entry) => entry.expiresAt < now);
 
-    // Clear from Isar
-    var count = 0;
-    await _isar?.writeTxn(() async {
-      final entries = await _isar?.cacheEntrys
-          .filter()
-          .expiresAtLessThan(now)
-          .findAll();
-      if (entries != null) {
-        count = entries.length;
-        await _isar?.cacheEntrys.deleteAll(entries.map((e) => e.isarId).toList());
-      }
-    });
+    // Clear from Drift
+    final count = await _db.deleteExpiredCacheEntries() ?? 0;
 
     return count;
   }
 
   /// Get cache statistics for debugging.
   Future<Map<String, dynamic>> getStats() async {
-    final allEntries = await _isar?.cacheEntrys.where().findAll();
+    final allEntries = await _db.getAllCacheEntries();
+    if (allEntries == null) {
+      return {
+        'total': 0,
+        'fresh': 0,
+        'expired': 0,
+        'memoryCache': _memoryCache.length,
+      };
+    }
     final now = DateTime.now().millisecondsSinceEpoch;
 
-    final total = allEntries?.length ?? 0;
-    final expired = allEntries?.where((e) => e.expiresAt < now).length ?? 0;
+    final total = allEntries.length;
+    final expired = allEntries.where((e) => e.expiresAt < now).length;
     final fresh = total - expired;
 
     return {
@@ -318,11 +289,13 @@ class CacheService {
     );
   }
 
-  /// Close the cache database.
+  /// Close the cache service.
+  ///
+  /// Clears the memory cache and resets the initialized state.
+  /// Note: Does not close the database - DatabaseService manages that.
   Future<void> close() async {
     _memoryCache.clear();
-    await _isar?.close();
-    _isar = null;
+    _isInitialized = false;
   }
 
   /// Dispose of resources.

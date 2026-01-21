@@ -17,15 +17,16 @@ dependencies:
     path: packages/zap_widgets
 
   # State Management
-  flutter_riverpod: ^2.5.1
-  riverpod_annotation: ^2.3.5
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
 
   # Routing
   go_router: ^14.2.0
 
-  # Database
-  isar: ^3.1.0+1
-  isar_flutter_libs: ^3.1.0+1
+  # Database (Drift - cross-platform including web)
+  drift: 2.22.1
+  drift_flutter: 0.2.4
+  sqlite3_flutter_libs: 0.5.28
 
   # Nostr (NDK)
   ndk: ^0.6.0
@@ -66,11 +67,11 @@ dev_dependencies:
     sdk: flutter
 
   # Code generation
-  build_runner: ^2.4.9
-  freezed: ^2.5.2
+  build_runner: ^2.4.13
+  freezed: ^2.5.7
   json_serializable: ^6.8.0
-  riverpod_generator: ^2.4.0
-  isar_generator: ^3.1.0+1
+  riverpod_generator: ^2.6.2
+  drift_dev: 2.22.1
 
   # Linting
   flutter_lints: ^5.0.0

@@ -5,8 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:ndk/ndk.dart';
 
 import '../core/constants/cache_config.dart';
-import '../features/feed/models/nostr_event.dart';
 import '../features/feed/models/post.dart';
+import 'database/app_database.dart';
 import 'cache/cache_service.dart';
 import 'database_service.dart';
 import 'ndk_service.dart';
@@ -309,32 +309,19 @@ class FeedService {
 
     // Run database writes in background - don't block UI
     Future(() async {
-      final nostrEvents = <NostrEvent>[];
-
       for (final ndkEvent in ndkEvents) {
         try {
-          final nostrEvent = NostrEvent(
+          await _dbService.db.upsertNostrEvent(NostrEventEntry(
             id: ndkEvent.id,
             pubkey: ndkEvent.pubKey,
             createdAt: ndkEvent.createdAt,
             kind: ndkEvent.kind,
             content: ndkEvent.content,
-            tags: ndkEvent.tags.map((tag) => jsonEncode(tag)).toList(),
+            tags: jsonEncode(ndkEvent.tags),
             sig: ndkEvent.sig,
-          );
-          nostrEvents.add(nostrEvent);
+          ));
         } catch (e) {
-          // Error converting event - skip
-        }
-      }
-
-      if (nostrEvents.isNotEmpty) {
-        try {
-          await _dbService.isar.writeTxn(() async {
-            await _dbService.isar.nostrEvents.putAll(nostrEvents);
-          });
-        } catch (e) {
-          // Error saving events - ignore
+          // Error saving event - skip
         }
       }
     });
