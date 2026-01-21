@@ -75,12 +75,18 @@ class LinkPreviewCard extends StatelessWidget {
     if (preview.hasImage) {
       return IntrinsicHeight(
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Thumbnail
-            SizedBox(
-              width: 100,
-              child: _buildThumbnail(),
+            // Thumbnail with original aspect ratio
+            ClipRRect(
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(11),
+                bottomLeft: Radius.circular(11),
+              ),
+              child: SizedBox(
+                width: 100,
+                child: _buildThumbnail(),
+              ),
             ),
             // Text content
             Expanded(
@@ -104,7 +110,8 @@ class LinkPreviewCard extends StatelessWidget {
   Widget _buildThumbnail() {
     return CachedNetworkImage(
       imageUrl: preview.imageUrl!,
-      fit: BoxFit.cover,
+      fit: BoxFit.contain,
+      alignment: Alignment.center,
       memCacheWidth: 200,
       memCacheHeight: 200,
       placeholder: (context, url) => Container(
@@ -255,7 +262,9 @@ class LinkPreviewCardSkeleton extends StatelessWidget {
 
 /// A consumer widget that fetches and displays a link preview.
 ///
-/// Automatically handles loading and error states.
+/// Automatically handles loading and error states with optimized caching.
+/// Uses in-memory cache to provide instant rendering for previously viewed URLs,
+/// eliminating loading skeletons during feed scrolling.
 ///
 /// Example:
 /// ```dart
@@ -282,6 +291,20 @@ class LinkPreviewWidget extends ConsumerWidget {
       return const SizedBox.shrink();
     }
 
+    // Check in-memory cache first for synchronous render (no loading skeleton)
+    final memoryCache = ref.watch(linkPreviewCacheProvider);
+    if (memoryCache.containsKey(url)) {
+      final cachedPreview = memoryCache[url];
+      if (cachedPreview == null || !cachedPreview.hasContent) {
+        return const SizedBox.shrink();
+      }
+      return LinkPreviewCard(
+        preview: cachedPreview,
+        onTap: onTap,
+      );
+    }
+
+    // Not in memory cache - fetch asynchronously
     final previewAsync = ref.watch(linkPreviewProvider(url));
 
     return previewAsync.when(

@@ -78,6 +78,8 @@ class AdaptiveScaffold extends StatefulWidget {
     this.navigationItems = defaultNavigationItems,
     this.floatingActionButton,
     this.appBar,
+    this.onCompose,
+    this.showCompose = false,
   });
 
   /// The main content of the scaffold.
@@ -97,6 +99,12 @@ class AdaptiveScaffold extends StatefulWidget {
 
   /// Optional app bar (used only on mobile).
   final PreferredSizeWidget? appBar;
+
+  /// Callback when compose button is pressed.
+  final VoidCallback? onCompose;
+
+  /// Whether to show the compose button (only for authenticated users).
+  final bool showCompose;
 
   @override
   State<AdaptiveScaffold> createState() => _AdaptiveScaffoldState();
@@ -276,34 +284,31 @@ class _AdaptiveScaffoldState extends State<AdaptiveScaffold> {
                 },
               ),
             ),
-            // Compose button at bottom
-            Padding(
-              padding: EdgeInsets.all(_isSidebarExpanded ? 16 : 12),
-              child: _isSidebarExpanded
-                  ? SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: () {
-                          // TODO: Navigate to compose
-                        },
-                        icon: const Icon(Icons.edit),
-                        label: const Text('Compose'),
-                        style: FilledButton.styleFrom(
+            // Compose button at bottom (only for authenticated users)
+            if (widget.showCompose)
+              Padding(
+                padding: EdgeInsets.all(_isSidebarExpanded ? 16 : 12),
+                child: _isSidebarExpanded
+                    ? SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: widget.onCompose,
+                          icon: const Icon(Icons.edit),
+                          label: const Text('Compose'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                        ),
+                      )
+                    : Center(
+                        child: FloatingActionButton.small(
+                          onPressed: widget.onCompose,
                           backgroundColor: AppColors.primary,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          child: const Icon(Icons.edit),
                         ),
                       ),
-                    )
-                  : Center(
-                      child: FloatingActionButton.small(
-                        onPressed: () {
-                          // TODO: Navigate to compose
-                        },
-                        backgroundColor: AppColors.primary,
-                        child: const Icon(Icons.edit),
-                      ),
-                    ),
-            ),
+              ),
           ],
         ),
       ),

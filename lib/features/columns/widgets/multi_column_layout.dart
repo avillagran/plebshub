@@ -2,7 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plebshub_ui/plebshub_ui.dart';
 
+import '../../../services/key_service.dart';
+import '../../../services/profile_service.dart';
 import '../../../shared/utils/responsive.dart';
+import '../../../shared/widgets/smart_image.dart';
+import '../../auth/providers/auth_provider.dart';
+import '../../auth/providers/auth_state.dart';
+import '../../profile/models/profile.dart';
 import '../models/column_config.dart';
 import '../providers/columns_provider.dart';
 import 'column_widget.dart';
@@ -405,7 +411,7 @@ class _ColumnToolbar extends ConsumerWidget {
 }
 
 /// Dialog for adding a new column.
-class _AddColumnDialog extends StatefulWidget {
+class _AddColumnDialog extends ConsumerStatefulWidget {
   const _AddColumnDialog({
     required this.onColumnTypeSelected,
   });
@@ -418,15 +424,24 @@ class _AddColumnDialog extends StatefulWidget {
   }) onColumnTypeSelected;
 
   @override
-  State<_AddColumnDialog> createState() => _AddColumnDialogState();
+  ConsumerState<_AddColumnDialog> createState() => _AddColumnDialogState();
 }
 
-class _AddColumnDialogState extends State<_AddColumnDialog> {
+class _AddColumnDialogState extends ConsumerState<_AddColumnDialog> {
   final _hashtagController = TextEditingController();
   final _userController = TextEditingController();
+  final _keyService = KeyService();
+  final _profileService = ProfileService.instance;
+
   ColumnType? _selectedType;
   bool _showHashtagInput = false;
   bool _showUserInput = false;
+
+  // User selection state
+  List<Profile> _followedUsers = [];
+  bool _isLoadingFollowed = false;
+  String? _userInputError;
+  Profile? _selectedFollowedUser;
 
   @override
   void dispose() {
@@ -435,54 +450,115 @@ class _AddColumnDialogState extends State<_AddColumnDialog> {
     super.dispose();
   }
 
+  /// Validate and resolve user input (npub or hex pubkey).
+  String? _validateUserInput(String input) {
+    if (input.isEmpty) return null;
+
+    // Try npub format
+    if (input.startsWith('npub1')) {
+      try {
+        return _keyService.npubToPublicKey(input);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // Try hex format
+    if (input.length == 64 && RegExp(r'^[0-9a-fA-F]+$').hasMatch(input)) {
+      return input.toLowerCase();
+    }
+
+    return null;
+  }
+
+  /// Load followed users for selection.
+  Future<void> _loadFollowedUsers() async {
+    final authState = ref.read(authProvider);
+    if (authState is! AuthStateAuthenticated) return;
+
+    setState(() {
+      _isLoadingFollowed = true;
+    });
+
+    try {
+      // Fetch followed pubkeys
+      final followedPubkeys = await _profileService.fetchFollowing(
+        authState.keypair.publicKey,
+      );
+
+      if (!mounted) return;
+
+      if (followedPubkeys.isEmpty) {
+        setState(() {
+          _followedUsers = [];
+          _isLoadingFollowed = false;
+        });
+        return;
+      }
+
+      // Fetch profiles for followed users (batch fetch)
+      final profiles = await _profileService.fetchProfiles(followedPubkeys);
+
+      if (!mounted) return;
+
+      // Sort by name for easier browsing
+      final sortedProfiles = profiles.values.toList()
+        ..sort((a, b) => a.nameForDisplay.toLowerCase().compareTo(
+              b.nameForDisplay.toLowerCase(),
+            ));
+
+      setState(() {
+        _followedUsers = sortedProfiles;
+        _isLoadingFollowed = false;
+      });
+    } catch (e) {
+      debugPrint('Error loading followed users: $e');
+      if (!mounted) return;
+      setState(() {
+        _isLoadingFollowed = false;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Add Column'),
       content: SizedBox(
-        width: 320,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Column type list
-            ..._buildColumnTypeOptions(),
+        width: 360,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Column type list
+              ..._buildColumnTypeOptions(),
 
-            // Hashtag input (shown when hashtag type selected)
-            if (_showHashtagInput) ...[
-              const SizedBox(height: 16),
-              TextField(
-                controller: _hashtagController,
-                decoration: InputDecoration(
-                  labelText: 'Hashtag',
-                  hintText: 'bitcoin',
-                  prefixText: '#',
-                  border: const OutlineInputBorder(),
-                  filled: true,
-                  fillColor: AppColors.surfaceVariant,
+              // Hashtag input (shown when hashtag type selected)
+              if (_showHashtagInput) ...[
+                const SizedBox(height: 16),
+                TextField(
+                  controller: _hashtagController,
+                  decoration: InputDecoration(
+                    labelText: 'Hashtag',
+                    hintText: 'bitcoin',
+                    prefixText: '#',
+                    border: const OutlineInputBorder(),
+                    filled: true,
+                    fillColor: AppColors.surfaceVariant,
+                  ),
+                  autofocus: true,
+                  onSubmitted: (_) => _submit(),
                 ),
-                autofocus: true,
-                onSubmitted: (_) => _submit(),
-              ),
-            ],
+              ],
 
-            // User input (shown when user type selected)
-            if (_showUserInput) ...[
-              const SizedBox(height: 16),
-              TextField(
-                controller: _userController,
-                decoration: InputDecoration(
-                  labelText: 'User npub',
-                  hintText: 'npub1...',
-                  border: const OutlineInputBorder(),
-                  filled: true,
-                  fillColor: AppColors.surfaceVariant,
-                ),
-                autofocus: true,
-                onSubmitted: (_) => _submit(),
-              ),
+              // User input section (shown when user type selected)
+              if (_showUserInput) ...[
+                const SizedBox(height: 16),
+                _buildUserInputSection(),
+              ],
             ],
-          ],
+          ),
         ),
       ),
       actions: [
@@ -498,6 +574,208 @@ class _AddColumnDialogState extends State<_AddColumnDialog> {
           child: const Text('Add'),
         ),
       ],
+    );
+  }
+
+  Widget _buildUserInputSection() {
+    final authState = ref.watch(authProvider);
+    final isAuthenticated = authState is AuthStateAuthenticated;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Manual npub/pubkey input
+        TextField(
+          controller: _userController,
+          decoration: InputDecoration(
+            labelText: 'User npub or pubkey',
+            hintText: 'npub1... or hex pubkey',
+            border: const OutlineInputBorder(),
+            filled: true,
+            fillColor: AppColors.surfaceVariant,
+            errorText: _userInputError,
+            suffixIcon: _userController.text.isNotEmpty
+                ? IconButton(
+                    icon: const Icon(Icons.clear, size: 18),
+                    onPressed: () {
+                      setState(() {
+                        _userController.clear();
+                        _userInputError = null;
+                        _selectedFollowedUser = null;
+                      });
+                    },
+                  )
+                : null,
+          ),
+          autofocus: true,
+          onChanged: (value) {
+            setState(() {
+              _selectedFollowedUser = null;
+              if (value.trim().isNotEmpty) {
+                final resolved = _validateUserInput(value.trim());
+                _userInputError = resolved == null
+                    ? 'Invalid npub or pubkey format'
+                    : null;
+              } else {
+                _userInputError = null;
+              }
+            });
+          },
+          onSubmitted: (_) {
+            if (_canSubmit()) _submit();
+          },
+        ),
+
+        // Followed users section (only for authenticated users)
+        if (isAuthenticated) ...[
+          const SizedBox(height: 16),
+          _buildFollowedUsersSection(),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildFollowedUsersSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Section header
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Or select from followed users',
+                style: AppTypography.labelMedium.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ),
+            if (_followedUsers.isEmpty && !_isLoadingFollowed)
+              TextButton.icon(
+                onPressed: _loadFollowedUsers,
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Load'),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+          ],
+        ),
+
+        const SizedBox(height: 8),
+
+        // Loading indicator
+        if (_isLoadingFollowed)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          )
+        // Followed users list (scrollable, max height)
+        else if (_followedUsers.isNotEmpty)
+          Container(
+            constraints: const BoxConstraints(maxHeight: 200),
+            decoration: BoxDecoration(
+              border: Border.all(color: AppColors.border),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: _followedUsers.length,
+              itemBuilder: (context, index) {
+                final profile = _followedUsers[index];
+                final isSelected = _selectedFollowedUser?.pubkey == profile.pubkey;
+
+                return ListTile(
+                  dense: true,
+                  selected: isSelected,
+                  selectedTileColor: AppColors.primary.withValues(alpha: 0.1),
+                  leading: ClipOval(
+                    child: profile.picture != null && profile.picture!.isNotEmpty
+                        ? SmartImage(
+                            imageUrl: profile.picture!,
+                            width: 32,
+                            height: 32,
+                            fit: BoxFit.cover,
+                            placeholder: (ctx, url) => _buildMiniAvatarPlaceholder(profile),
+                            errorWidget: (ctx, url, err) => _buildMiniAvatarPlaceholder(profile),
+                          )
+                        : _buildMiniAvatarPlaceholder(profile),
+                  ),
+                  title: Text(
+                    profile.nameForDisplay,
+                    style: AppTypography.bodyMedium.copyWith(
+                      fontWeight: isSelected ? FontWeight.bold : null,
+                      color: isSelected ? AppColors.primary : null,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: profile.nip05 != null
+                      ? Text(
+                          profile.nip05!,
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        )
+                      : null,
+                  trailing: isSelected
+                      ? Icon(Icons.check_circle, color: AppColors.primary, size: 20)
+                      : null,
+                  onTap: () {
+                    setState(() {
+                      _selectedFollowedUser = profile;
+                      _userController.text = profile.pubkey;
+                      _userInputError = null;
+                    });
+                  },
+                );
+              },
+            ),
+          )
+        // Empty state
+        else
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            decoration: BoxDecoration(
+              border: Border.all(color: AppColors.border),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Text(
+                'Tap "Load" to see followed users',
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildMiniAvatarPlaceholder(Profile profile) {
+    return Container(
+      width: 32,
+      height: 32,
+      color: AppColors.surfaceVariant,
+      child: Center(
+        child: Text(
+          profile.nameForDisplay.isNotEmpty
+              ? profile.nameForDisplay[0].toUpperCase()
+              : '?',
+          style: AppTypography.labelMedium.copyWith(
+            color: AppColors.textSecondary,
+          ),
+        ),
+      ),
     );
   }
 
@@ -549,6 +827,8 @@ class _AddColumnDialogState extends State<_AddColumnDialog> {
       _selectedType = type;
       _showHashtagInput = type == ColumnType.hashtag;
       _showUserInput = type == ColumnType.user;
+      _userInputError = null;
+      _selectedFollowedUser = null;
     });
 
     // For types that don't need additional input, submit immediately
@@ -567,7 +847,9 @@ class _AddColumnDialogState extends State<_AddColumnDialog> {
     }
 
     if (_selectedType == ColumnType.user) {
-      return _userController.text.trim().isNotEmpty;
+      final input = _userController.text.trim();
+      if (input.isEmpty) return false;
+      return _validateUserInput(input) != null;
     }
 
     return true;
@@ -587,7 +869,14 @@ class _AddColumnDialogState extends State<_AddColumnDialog> {
     }
 
     if (_selectedType == ColumnType.user) {
-      userPubkey = _userController.text.trim();
+      final input = _userController.text.trim();
+      userPubkey = _validateUserInput(input);
+      if (userPubkey == null) {
+        setState(() {
+          _userInputError = 'Invalid npub or pubkey format';
+        });
+        return;
+      }
     }
 
     widget.onColumnTypeSelected(
